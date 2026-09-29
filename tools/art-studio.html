@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Living Draft — Art Studio</title>
+<style>
+  :root { --bg: #1b1613; --panel: #2a221d; --ink: #efe3c8; --dim: #b9a98c; --acc: #d9794a; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, sans-serif; }
+  header { padding: 14px 20px; background: #120e0c; display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap; }
+  header h1 { margin: 0; font: 22px Georgia, serif; }
+  nav button { background: none; border: 1px solid #5a4a3c; color: var(--ink); padding: 6px 12px; border-radius: 4px; cursor: pointer; }
+  nav button.on { background: var(--acc); border-color: var(--acc); color: #120e0c; }
+  main { padding: 16px 20px; }
+  .card { background: var(--panel); border-radius: 6px; padding: 12px 14px; margin-bottom: 16px; }
+  .card h3 { margin: 0 0 6px; font: 18px Georgia, serif; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+  table { border-collapse: collapse; margin: 6px 0; }
+  td, th { border: 1px solid #4a3d32; padding: 3px 8px; text-align: left; }
+  th { color: var(--dim); font-weight: 600; }
+  canvas { max-width: 100%; background: #fff; display: block; margin-top: 8px; image-rendering: auto; }
+  .btn { background: var(--acc); color: #120e0c; border: 0; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: 600; }
+  .muted { color: var(--dim); }
+  textarea { width: 100%; height: 140px; background: #120e0c; color: var(--ink); border: 1px solid #4a3d32; font: 12px monospace; }
+  select, input[type=file] { background: #120e0c; color: var(--ink); border: 1px solid #4a3d32; padding: 4px; }
+  .legend span { display: inline-block; margin-right: 14px; }
+  .sw { display: inline-block; width: 12px; height: 12px; vertical-align: -1px; margin-right: 4px; border: 1px solid #000; }
+</style>
+</head>
+<body>
+<header>
+  <h1>The Living Draft — Art Studio</h1>
+  <nav><button data-tab="rooms" class="on">Room guides</button><button data-tab="sprites">Sprite templates</button><button data-tab="hands">Hand anchors</button></nav>
+  <span class="muted">Everything here is generated from the game's own data, so sizes always match. Nothing is uploaded anywhere.</span>
+</header>
+<main id="main"></main>
+
+<script src="../js/core/util.js"></script>
+<script src="../assets/manifest.js"></script>
+<script src="../js/core/art.js"></script>
+<script src="../js/data/config.js"></script>
+<script src="../js/data/dialogue.js"></script>
+<script src="../js/data/rooms.js"></script>
+<script src="../js/core/assets.js"></script>
+<script>
+(function () {
+  const LD = window.LD, U = LD.U, T = U.TILE, M = LD.ArtManifest;
+  const main = document.getElementById("main");
+  const X2 = 2; // art is authored at 2x
+  const ALL_FLAGS = { pigment_water: 1, boss_marshal: 1, boss_hart: 1, hatch_open: 1, ash_door: 1, foldstep: 1, broke_margin: 1, broke_gardens: 1, metPell: 1 };
+
+  function download(canvas, name) {
+    canvas.toBlob((b) => { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); });
+  }
+  function el(html) { const d = document.createElement("div"); d.innerHTML = html.trim(); return d.firstChild; }
+
+  // ------------------------------------------------------------ room guides
+  const ENT_LABEL = { enemy: (e) => e.k, boss: (e) => "BOSS " + e.k, npc: (e) => "NPC " + e.k, station: () => "SAVE STATION", inkwell: () => "ink well", cache: () => "ink cache", lore: (e) => "lore: " + e.kind, door: () => "door", latch: () => "latch", pigment: () => "pigment altar", trigger: () => "", hint: () => "" };
+
+  function roomGuide(id) {
+    const base = LD.buildRoom(id, {}), all = LD.buildRoom(id, ALL_FLAGS);
+    const w = base.w * T * X2, h = base.h * T * X2, s = X2 * T;
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    const x = c.getContext("2d");
+    x.fillStyle = "#f4f1ea"; x.fillRect(0, 0, w, h);
+    // grid
+    x.strokeStyle = "rgba(0,0,0,0.07)"; x.lineWidth = 1;
+    for (let i = 0; i <= base.w; i++) { x.beginPath(); x.moveTo(i * s, 0); x.lineTo(i * s, h); x.stroke(); }
+    for (let j = 0; j <= base.h; j++) { x.beginPath(); x.moveTo(0, j * s); x.lineTo(w, j * s); x.stroke(); }
+    const dyn = (tx, ty) => { const a = base.grid[ty][tx], b = all.grid[ty][tx]; return a !== b || "BHDGV".includes(a) || "BHDGV".includes(b); };
+    for (let ty = 0; ty < base.h; ty++) for (let tx = 0; tx < base.w; tx++) {
+      const ch = base.grid[ty][tx], px = tx * s, py = ty * s;
+      if (dyn(tx, ty)) {
+        x.fillStyle = "rgba(240,200,40,0.55)"; x.fillRect(px, py, s, s);
+        x.strokeStyle = "rgba(120,90,0,0.8)"; x.beginPath(); x.moveTo(px, py + s); x.lineTo(px + s, py); x.stroke();
+        continue;
+      }
+      if (ch === "#") { x.fillStyle = "#5b5f66"; x.fillRect(px, py, s, s); }
+      else if (ch === "=") { x.fillStyle = "#8a5a2b"; x.fillRect(px, py, s, s * 0.28); }
+      else if (ch === "^") { x.fillStyle = "#c0392b"; x.beginPath(); x.moveTo(px, py + s); x.lineTo(px + s / 2, py + s * 0.35); x.lineTo(px + s, py + s); x.fill(); }
+      else if (ch === "~") { x.fillStyle = "#1d2a4a"; x.fillRect(px, py + s * 0.2, s, s * 0.8); }
+      else if (ch === "X") { x.fillStyle = "rgba(0,0,0,0.25)"; x.fillRect(px, py, s, s); }
+    }
+    // hidden rooms
+    for (const cv of base.covers) {
+      x.strokeStyle = "#8e44ad"; x.lineWidth = 6; x.setLineDash([14, 8]);
+      x.strokeRect(cv.x * s, cv.y * s, cv.w * s, cv.h * s); x.setLineDash([]);
+      label(x, "HIDDEN ROOM (see spec)", cv.x * s + 6, cv.y * s - 8, "#8e44ad");
+    }
+    // exits
+    for (const e of base.exits) {
+      let ax, ay;
+      if (e.side === "L") { ax = 20; ay = ((e.a + e.b + 1) / 2) * s; }
+      else if (e.side === "R") { ax = w - 20; ay = ((e.a + e.b + 1) / 2) * s; }
+      else if (e.side === "T") { ax = ((e.a + e.b + 1) / 2) * s; ay = 24; }
+      else { ax = ((e.a + e.b + 1) / 2) * s; ay = h - 24; }
+      x.fillStyle = "#1e8449"; x.beginPath(); x.arc(ax, ay, 16, 0, 7); x.fill();
+      label(x, "exit → " + e.to, Math.min(w - 260, Math.max(10, ax - 60)), ay + (e.side === "B" ? -26 : 40), "#1e8449");
+    }
+    // entities & props (positions the painting should respect)
+    for (const e of base.ents) {
+      const f = ENT_LABEL[e.t]; if (!f) continue; const t = f(e); if (!t) continue;
+      const px = e.x * s, py = e.y * s;
+      x.fillStyle = "#2471a3"; x.fillRect(px - 5, py - 5, 10, 10);
+      label(x, t, px + 8, py - 10, "#2471a3");
+    }
+    for (const p of base.props) {
+      const px = p.x * s, py = p.y * s;
+      x.strokeStyle = "#d35400"; x.lineWidth = 3; x.beginPath(); x.moveTo(px - 10, py); x.lineTo(px + 10, py); x.moveTo(px, py - 10); x.lineTo(px, py); x.stroke();
+      label(x, p.type, px + 6, py - 14, "#d35400");
+    }
+    // player size reference at every door/exit-less ground point: draw one near the first entity
+    const ref = base.ents.find((e) => e.t === "station" || e.t === "npc" || e.t === "enemy") || { x: 3, y: base.h - 3 };
+    x.strokeStyle = "#000"; x.lineWidth = 3; x.strokeRect(ref.x * s - 60, ref.y * s - 112, 48, 112);
+    label(x, "player size", ref.x * s - 70, ref.y * s - 122, "#000");
+    return c;
+  }
+  function label(x, t, px, py, col) {
+    x.font = "bold 22px system-ui"; x.lineWidth = 5; x.strokeStyle = "rgba(255,255,255,0.9)"; x.strokeText(t, px, py); x.fillStyle = col; x.fillText(t, px, py);
+  }
+
+  function roomsTab() {
+    main.innerHTML = "";
+    main.appendChild(el(`<div class="card"><h3>How to use a room guide</h3>
+      <p>Each guide is exactly the size of <b>terrain.png</b> for that room (2x). Paint the ground, walls, ledges and planks <b>over the grey/brown shapes</b>, so the painted edges line up with where the player stands.</p>
+      <p class="legend"><span><i class="sw" style="background:#5b5f66"></i>solid — paint as ground/wall</span><span><i class="sw" style="background:#8a5a2b"></i>one-way plank</span><span><i class="sw" style="background:#c0392b"></i>thorns / embers</span><span><i class="sw" style="background:#1d2a4a"></i>ink pool</span><span><i class="sw" style="background:rgba(240,200,40,.8)"></i>changes during play — leave EMPTY (transparent), the game draws it</span><span><i class="sw" style="background:#8e44ad"></i>hidden room</span><span><i class="sw" style="background:#2471a3"></i>characters / pickups (keep readable)</span><span><i class="sw" style="background:#d35400"></i>suggested lamp / tree / sign spot</span></p>
+      <p class="muted">Parallax layers (sky/far/mid/near/fg) don't need to line up with tiles — just use the sizes in the table.</p></div>`));
+    for (const id in LD.RoomDefs) {
+      const r = LD.RoomDefs[id];
+      const room = LD.buildRoom(id, {});
+      const rows = ["sky", "far", "mid", "near", "fg"].map((l) => {
+        const f = M.roomLayers[l];
+        const [lw, lh] = l === "sky" ? [U.VIEW_W, U.VIEW_H] : LD.Assets.layerSize(room, f);
+        return `<tr><td>${l}.png</td><td>${lw * X2} × ${lh * X2}</td><td>${l === "sky" ? "fixed" : "parallax " + f}</td></tr>`;
+      }).join("");
+      const card = el(`<div class="card"><h3>${r.name} <span class="muted">— assets/rooms/${id}/</span></h3>
+        <table><tr><th>file</th><th>size (px)</th><th>behaviour</th></tr>${rows}
+        <tr><td>terrain.png</td><td>${room.w * T * X2} × ${room.h * T * X2}</td><td>aligned 1:1 with the guide below</td></tr></table>
+        <div class="row"><button class="btn">Download guide PNG</button><span class="muted">theme: ${r.theme}</span></div></div>`);
+      const cv = roomGuide(id);
+      card.appendChild(cv);
+      card.querySelector("button").onclick = () => download(cv, "guide_" + id + ".png");
+      main.appendChild(card);
+    }
+  }
+
+  // ------------------------------------------------------------ sprite templates
+  const HITBOX = {
+    sketcher: [D().player.w, D().player.h], crawler: dims("crawler"), wretch: dims("wretch"), moth: dims("moth"), guard: dims("guard"), leaflet: dims("leaflet"),
+    hart: [D().bosses.hart.w, D().bosses.hart.h], marshal: [D().bosses.marshal.w, D().bosses.marshal.h],
+  };
+  function D() { return LD.Data; }
+  function dims(k) { const e = LD.Data.enemies[k]; return [e.w, e.h]; }
+
+  function spriteTemplate(set, anim) {
+    const def = M.sprites[set], a = def.anims[anim];
+    const [fw, fh] = def.frame, n = a.n;
+    const c = document.createElement("canvas"); c.width = fw * n; c.height = fh;
+    const x = c.getContext("2d");
+    for (let i = 0; i < n; i++) {
+      const ox = i * fw;
+      x.fillStyle = i % 2 ? "#f3f0ea" : "#ebe6dc"; x.fillRect(ox, 0, fw, fh);
+      x.strokeStyle = "#999"; x.strokeRect(ox + 0.5, 0.5, fw - 1, fh - 1);
+      const [cx, cy] = def.origin;
+      x.strokeStyle = "#c0392b"; x.lineWidth = 2;
+      x.beginPath(); x.moveTo(ox, cy); x.lineTo(ox + fw, cy); x.stroke();
+      x.beginPath(); x.moveTo(ox + cx - 10, cy); x.lineTo(ox + cx + 10, cy); x.moveTo(ox + cx, cy - 10); x.lineTo(ox + cx, cy + 10); x.stroke();
+      const hb = HITBOX[set];
+      if (hb) {
+        const sc = 1 / (def.scale || 0.5);
+        x.strokeStyle = "#2471a3"; x.setLineDash([6, 4]);
+        x.strokeRect(ox + cx - (hb[0] * sc) / 2, cy - hb[1] * sc, hb[0] * sc, hb[1] * sc); x.setLineDash([]);
+      }
+      x.fillStyle = "#555"; x.font = "12px system-ui"; x.fillText(anim + " " + (i + 1) + "/" + n, ox + 6, 16);
+    }
+    return c;
+  }
+
+  function spritesTab() {
+    main.innerHTML = "";
+    main.appendChild(el(`<div class="card"><h3>Frame templates</h3>
+      <p>Each strip is exactly the file the game expects: <b>n frames side by side</b>, each the frame size below, on a <b>transparent</b> background (delete the template colours when you export).</p>
+      <p><b style="color:#c0392b">Red line + cross</b> = ground / feet. Every frame must stand on it at the same spot. <b style="color:#2471a3">Blue dashed box</b> = the collision box: the body should roughly fill it; cloaks, weapons and effects may spill out.</p>
+      <p>All characters face <b>right</b>. The game mirrors them. The Sketcher is painted <b>without a weapon</b>: the player's own drawn weapon is placed in the hand (see "Hand anchors").</p></div>`));
+    for (const set in M.sprites) {
+      const def = M.sprites[set];
+      const card = el(`<div class="card"><h3>${set} <span class="muted">— assets/sprites/${set}/ · frame ${def.frame[0]}×${def.frame[1]} · feet at (${def.origin})</span></h3><div class="list"></div></div>`);
+      const list = card.querySelector(".list");
+      for (const anim in def.anims) {
+        const a = def.anims[anim];
+        const drive = /^attack|^dodge|^rise$|^reach$|^cleave|^sweep|^lob|^lunge|^stomp|^charge_wind|^leap|^land|^rear|^windup|^slash|^thrust|^tele|^crouch/.test(anim) ? "timed to the action" : a.once ? "plays once at " + a.fps + " fps" : "loops at " + (a.fps || 8) + " fps";
+        const row = el(`<div class="row"><b>${anim}.png</b><span class="muted">${a.n} frames · ${def.frame[0] * a.n}×${def.frame[1]} · ${drive}</span><button class="btn">template</button></div>`);
+        row.querySelector("button").onclick = () => download(spriteTemplate(set, anim), set + "_" + anim + "_template.png");
+        list.appendChild(row);
+      }
+      main.appendChild(card);
+    }
+  }
+
+  // ------------------------------------------------------------ hand anchors
+  function handsTab() {
+    main.innerHTML = "";
+    const def = M.sprites.sketcher;
+    const card = el(`<div class="card"><h3>Hand anchors — where the drawn weapon is held</h3>
+      <p>Load one of your finished Sketcher strips, pick the animation it belongs to, then click the <b>gripping hand</b> in every frame (it advances automatically). Paste the result into <code>assets/manifest.js</code> inside <code>sketcher.hands</code>.</p>
+      <div class="row"><select id="an"></select><input type="file" id="file" accept="image/png"><button class="btn" id="prev">◀ frame</button><button class="btn" id="next">frame ▶</button><span id="info" class="muted"></span></div>
+      <canvas id="cv" width="512" height="512" style="background:#ddd;cursor:crosshair;width:512px"></canvas>
+      <p class="muted">Hands you leave unset keep using the game's own skeleton for that frame.</p>
+      <textarea id="out" readonly></textarea></div>`);
+    main.appendChild(card);
+    const sel = card.querySelector("#an"), cv = card.querySelector("#cv"), x = cv.getContext("2d"), out = card.querySelector("#out"), info = card.querySelector("#info");
+    for (const a in def.anims) sel.appendChild(new Option(a, a));
+    const hands = JSON.parse(JSON.stringify(def.hands || {}));
+    let img = null, f = 0;
+    const n = () => def.anims[sel.value].n;
+    function draw() {
+      x.clearRect(0, 0, 512, 512);
+      if (!img) { x.fillStyle = "#555"; x.font = "16px system-ui"; x.fillText("load a strip for: " + sel.value, 20, 30); return; }
+      const fw = img.width / n(), k = fw / def.frame[0];
+      x.drawImage(img, f * fw, 0, fw, img.height, 0, 0, def.frame[0] * 2, def.frame[1] * 2);
+      x.strokeStyle = "#c0392b"; x.beginPath(); x.moveTo(0, def.origin[1] * 2); x.lineTo(512, def.origin[1] * 2); x.stroke();
+      const h = (hands[sel.value] || [])[f];
+      if (h) { x.fillStyle = "#e67e22"; x.beginPath(); x.arc(h[0] * 2, h[1] * 2, 7, 0, 7); x.fill(); }
+      info.textContent = "frame " + (f + 1) + " / " + n() + (Math.abs(k - 1) > 0.01 ? " (file is " + Math.round(k * 100) + "% of spec size — anchors are converted)" : "");
+      out.value = "hands: " + JSON.stringify(hands, null, 1).replace(/\n\s*(\d|\[|\])/g, " $1").replace(/\[ /g, "[") + ",";
+    }
+    card.querySelector("#file").onchange = (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      const i = new Image(); i.onload = () => { img = i; f = 0; draw(); }; i.src = URL.createObjectURL(file);
+    };
+    sel.onchange = () => { f = 0; draw(); };
+    card.querySelector("#prev").onclick = () => { f = (f + n() - 1) % n(); draw(); };
+    card.querySelector("#next").onclick = () => { f = (f + 1) % n(); draw(); };
+    cv.onclick = (e) => {
+      if (!img) return;
+      const r = cv.getBoundingClientRect(), px = ((e.clientX - r.left) / r.width) * 512, py = ((e.clientY - r.top) / r.height) * 512;
+      const arr = (hands[sel.value] = hands[sel.value] || []);
+      arr[f] = [Math.round(px / 2), Math.round(py / 2)];
+      for (let i = 0; i < n(); i++) if (!arr[i]) arr[i] = null;
+      f = (f + 1) % n(); draw();
+    };
+    draw();
+  }
+
+  const tabs = { rooms: roomsTab, sprites: spritesTab, hands: handsTab };
+  document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
+    document.querySelectorAll("nav button").forEach((o) => o.classList.toggle("on", o === b));
+    tabs[b.dataset.tab]();
+  });
+  roomsTab();
+})();
+</script>
+</body>
+</html>
