@@ -20,6 +20,9 @@
     station: null,
     inkSpent: 0,
     redraws: 0,
+    spare: null,                               // a second drawn weapon kept in reserve
+    marg: { owned: [], equipped: [] },         // Marginalia found / worn
+    checkpoint: null,                          // the last dog-eared page touched
   });
 
   // ---------------------------------------------------------------- ink

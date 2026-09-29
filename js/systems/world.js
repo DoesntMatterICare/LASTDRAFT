@@ -38,6 +38,13 @@
     return false;
   };
   W.oneWay = (tx, ty) => W.tileAt(tx, ty) === "=";
+  // Is a rectangle clear of solid tiles? (used for corner correction / ledge assist)
+  W.rectFree = (r, b) => {
+    const x0 = Math.floor(r.x / T), x1 = Math.floor((r.x + r.w - 0.01) / T);
+    const y0 = Math.floor(r.y / T), y1 = Math.floor((r.y + r.h - 0.01) / T);
+    for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) if (W.solid(tx, ty, b)) return false;
+    return true;
+  };
   W.pointSolid = (px, py) => W.solid(Math.floor(px / T), Math.floor(py / T), null);
 
   function moveX(b, dx) {

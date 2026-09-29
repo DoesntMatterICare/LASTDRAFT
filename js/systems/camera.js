@@ -6,7 +6,7 @@
 
   const C = (LD.Camera = {
     x: 0, y: 0, zoom: 1.22, targetZoom: 1, base: 1.22, trauma: 0, shakeScale: 1,
-    look: 0, focus: null, lock: null, ox: 0, oy: 0,
+    look: 0, focus: null, lock: null, ox: 0, oy: 0, zb: 1.22, punch: 0, roll: 0, rollTo: 0,
   });
 
   C.viewW = () => U.VIEW_W / C.zoom;
@@ -14,7 +14,7 @@
 
   C.snap = (px, py, room) => {
     C.look = 0;
-    C.zoom = C.targetZoom * C.base;
+    C.zb = C.zoom = C.targetZoom * C.base; C.punch = 0;
     C.x = px - C.viewW() / 2; C.y = py - C.viewH() * 0.55;
     clamp(room);
   };
@@ -33,7 +33,10 @@
   }
 
   C.update = (dt, player, room) => {
-    C.zoom = U.damp(C.zoom, C.targetZoom * C.base, 3, dt);
+    // zb eases toward the target; `punch` is a quick cinematic zoom kick layered on top
+    C.zb = U.damp(C.zb, C.targetZoom * C.base, C.focus && C.focus.zoomRate ? C.focus.zoomRate : 3, dt);
+    C.punch = U.damp(C.punch, 0, 5, dt);
+    C.zoom = C.zb * (1 + C.punch);
     let tx, ty;
     if (C.focus) {
       tx = C.focus.x - C.viewW() / 2; ty = C.focus.y - C.viewH() / 2;
