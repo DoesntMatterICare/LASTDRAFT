@@ -27,6 +27,8 @@
 <!-- systems -->
 <script src="js/systems/particles.js"></script>
 <script src="js/systems/camera.js"></script>
+<script src="js/systems/cinema.js"></script>
+<script src="js/systems/telemetry.js"></script>
 <script src="js/systems/save.js"></script>
 <script src="js/systems/progress.js"></script>
 <script src="js/systems/backgrounds.js"></script>
@@ -41,6 +43,7 @@
 <script src="js/entities/interactables.js"></script>
 <script src="js/entities/character-art.js"></script>
 <script src="js/entities/object-art.js"></script>
+<script src="js/systems/loadout.js"></script>
 <!-- ui -->
 <script src="js/ui/ui-kit.js"></script>
 <script src="js/ui/hud.js"></script>
@@ -49,8 +52,11 @@
 <script src="js/ui/station.js"></script>
 <script src="js/ui/map.js"></script>
 <script src="js/ui/menus.js"></script>
+<script src="js/ui/prologue.js"></script>
 <!-- flow -->
 <script src="js/systems/cutscene.js"></script>
 <script src="js/game.js"></script>
+<!-- dev: automated playtest harness, only with ?playtest in the URL -->
+<script>if (/[?&]playtest/.test(location.search)) document.write('<script src="tools/playtest.js"><\/script>');</script>
 </body>
 </html>
