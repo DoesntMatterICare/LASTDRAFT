@@ -56,6 +56,8 @@
     r.ent({ t: "hint", x: 50, w: 7, text: "{attack}  strike    {dodge}  dodge    {guard}  guard" });
     r.ent({ t: "hint", x: 7, w: 9, text: F.foldstep ? "Run, {jump}, then {dash}  — Foldstep through the creased page" : "The page is creased shut. Walking feet can't unfold it.", sticky: true });
     r.ent({ t: "lore", id: "margin_note", x: 43, y: 15, kind: "note" });
+    r.ent({ t: "margin", id: "heavy_hand", x: 41.6, y: 15 });
+    r.ent({ t: "checkpoint", id: "cp_margin", x: 34, y: 15 });
     r.ent({ t: "enemy", k: "crawler", x: 55, y: 15 });
 
     r.prop("pages", 13, 15); r.prop("silhouette", 24, 15, { v: 0 }); r.prop("silhouette", 36, 15, { v: 1 });
@@ -82,6 +84,7 @@
     if (!F.pigment_water) r.ent({ t: "npc", k: "lampwick", x: 30, y: 15 });
     r.ent({ t: "lore", id: "notice", x: 37, y: 15, kind: "board" });
     r.ent({ t: "inkwell", id: "streets_well", x: 61, y: 15 });
+    r.ent({ t: "checkpoint", id: "cp_streets", x: 52, y: 15 });
     r.ent({ t: "enemy", k: "crawler", x: 39, y: 15 });
     r.ent({ t: "enemy", k: "wretch", x: 57, y: 15 });
     r.ent({ t: "hint", x: 45.5, w: 3, text: "{down} + {jump}  drop through" });
@@ -97,15 +100,15 @@
   // ------------------------------------------------------------------ THE BINDERY
   def("bindery", { name: "The Bindery", w: 32, h: 18, theme: "bindery", music: "bindery", amb: "interior", safe: true, map: { x: 2, y: -1, w: 1, h: 1 } }, (r, F) => {
     r.rect(0, 0, 32, 2); r.rect(0, 2, 1, 13); r.rect(31, 2, 1, 13); r.rect(0, 15, 32, 3);
-    r.plat(23, 11, 7);
+    r.plat(23, 12, 7);             // within a single jump of the floor (max rise ≈ 3.7 tiles)
     r.ent({ t: "door", x: 4, y: 15, to: "streets", sx: 10.5, sy: 15, label: "Out to the streets", inner: true });
     r.ent({ t: "station", id: "bindery", x: 15, y: 15, desk: true });
     r.ent({ t: "npc", k: "quillon", x: 21, y: 15 });
     if (F.pigment_water) r.ent({ t: "npc", k: "lampwick", x: 9, y: 15 });
     if (F.boss_marshal && F.metPell) r.ent({ t: "npc", k: "pell", x: 27, y: 15 });
-    r.ent({ t: "lore", id: "ledger", x: 27, y: 11, kind: "note" });
+    r.ent({ t: "lore", id: "ledger", x: 27, y: 12, kind: "note" });
     r.prop("press", 7, 15); r.prop("jars", 11, 15); r.prop("candle", 13, 15); r.prop("candle", 18.5, 15);
-    r.prop("jars", 25, 11); r.prop("pages", 20, 15);
+    r.prop("jars", 25, 12); r.prop("pages", 20, 15);
   });
 
   // ------------------------------------------------------------------ FADED GARDENS (optional)
@@ -125,6 +128,8 @@
     r.ent({ t: "npc", k: "pell", x: 11, y: 15 });
     r.ent({ t: "lore", id: "pell_sketch", x: 15.5, y: 15, kind: "note" });
     r.ent({ t: "cache", id: "gardens_hut", x: 2.5, y: 15 });
+    r.ent({ t: "margin", id: "inkstained", x: 4, y: 15 });
+    r.ent({ t: "checkpoint", id: "cp_gardens", x: 20, y: 15 });
     r.ent({ t: "cache", id: "gardens_pocket", x: 11, y: 9 });
     if (!F.ash_door) r.ent({ t: "latch", x: 30.2, y: 15, side: "back" });
     r.ent({ t: "enemy", k: "moth", x: 18, y: 7 });
@@ -141,6 +146,7 @@
     r.clear(44, 0, 4, 2);
     if (!F.hatch_open) r.rect(18, 0, 2, 2, "H"); else r.clear(18, 0, 2, 2);
     r.plat(14, 12, 3); r.plat(19, 9, 4); r.plat(16, 6, 6);
+    r.plat(17, 3, 4);               // a last plank under the grate: strike it with any weapon, then climb out
     r.clear(24, 15, 16, 1);
     r.rect(30, 12, 4, 4);
     r.clear(52, 15, 4, 3); r.rect(52, 17, 4, 1, "~");
@@ -156,6 +162,9 @@
     r.ent({ t: "inkwell", id: "canals_well", x: 4, y: 15 });
     r.ent({ t: "lore", id: "mural", x: 9, y: 15, kind: "mural" });
     r.ent({ t: "cache", id: "canals_shelf", x: 92, y: 6 });
+    r.ent({ t: "margin", id: "splash_nib", x: 90, y: 6 });
+    r.ent({ t: "checkpoint", id: "cp_canals_a", x: 48, y: 15 });
+    r.ent({ t: "checkpoint", id: "cp_canals_b", x: 75, y: 15 });
     r.ent({ t: "enemy", k: "crawler", x: 27, y: 16 });
     r.ent({ t: "enemy", k: "moth", x: 36, y: 8 });
     r.ent({ t: "enemy", k: "crawler", x: 60, y: 15 });
@@ -178,6 +187,7 @@
     r.exit("L", 11, 14, "canals", 94.5, 15, { face: -1 });
     r.exit("T", 26, 28, "bridge", 59.5, 17.9, { vy: -1250 });
     if (!F.boss_hart) r.ent({ t: "boss", k: "hart", x: 22, y: 15 });
+    r.ent({ t: "checkpoint", id: "cp_cistern", x: 3.5, y: 15 });
     r.ent({ t: "pigment", x: 16, y: 15 });
     if (F.pigment_water) r.ent({ t: "lore", id: "fingerprints", x: 12.5, y: 15, kind: "prints" });
     r.prop("basin", 16, 15, { full: !!F.pigment_water }); r.prop("pipe", 6, 2); r.prop("pipe", 20, 2);
@@ -201,6 +211,7 @@
 
     r.ent({ t: "inkwell", id: "bridge_well", x: 4, y: 15 });
     r.ent({ t: "cache", id: "bridge_frag", x: 32, y: 6 });
+    r.ent({ t: "checkpoint", id: "cp_bridge", x: 44.5, y: 12 });
     r.ent({ t: "enemy", k: "guard", x: 35, y: 12 });
     r.ent({ t: "enemy", k: "moth", x: 41, y: 8 });
     r.ent({ t: "enemy", k: "crawler", x: 51, y: 12 });
@@ -223,6 +234,7 @@
     r.exit("L", 10, 13, "ashway", 62.5, 14, { face: -1 });
 
     r.ent({ t: "inkwell", id: "spire_well", x: 4, y: 30 });
+    r.ent({ t: "checkpoint", id: "cp_spire", x: 12, y: 19 });
     r.ent({ t: "enemy", k: "guard", x: 24, y: 30 });
     r.ent({ t: "enemy", k: "moth", x: 14, y: 24 });
     r.ent({ t: "enemy", k: "wretch", x: 12, y: 19 });
@@ -271,6 +283,7 @@
     r.exit("B", 8, 11, "ashway", 41.5, 3);
     r.exit("B", 56, 59, "spire", 25.5, 1);
     if (!F.boss_marshal) r.ent({ t: "boss", k: "marshal", x: 28, y: 15 });
+    r.ent({ t: "checkpoint", id: "cp_arena", x: 4.5, y: 15 });
     r.ent({ t: "hint", x: 37, w: 4, text: F.foldstep ? "{jump}, then {dash} + →  Foldstep across" : "The floor has burned away.", sticky: true });
     r.prop("pages", 20, 15, { burnt: true }); r.prop("pages", 52, 15, { burnt: true });
   });
