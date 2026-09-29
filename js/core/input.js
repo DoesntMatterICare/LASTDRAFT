@@ -12,6 +12,8 @@
     attack: ["KeyJ", "KeyX"],
     dodge: ["KeyK", "KeyC"],
     guard: ["KeyL", "KeyV"],
+    art: ["KeyU", "KeyQ"],
+    swap: ["KeyR", "KeyT"],
     dash: ["ShiftLeft", "ShiftRight"],
     interact: ["KeyE", "KeyF"],
     map: ["KeyM", "Tab"],
@@ -28,7 +30,7 @@
   };
   const PAD_BINDS = {
     left: ["PadLeft"], right: ["PadRight"], up: ["PadUp"], down: ["PadDown"],
-    jump: ["Pad0"], attack: ["Pad2"], dodge: ["Pad1"], guard: ["Pad4", "Pad6"],
+    jump: ["Pad0"], attack: ["Pad2"], dodge: ["Pad1"], guard: ["Pad4"], art: ["Pad6"], swap: ["Pad11", "Pad10"],
     dash: ["Pad5", "Pad7"], interact: ["Pad3"], map: ["Pad8"], pause: ["Pad9"],
   };
 
@@ -36,7 +38,7 @@
     ACTIONS: Object.keys(DEFAULT_BINDS),
     ACTION_NAMES: {
       left: "Move left", right: "Move right", up: "Look / aim up", down: "Crouch / aim down",
-      jump: "Jump", attack: "Attack", dodge: "Dodge", guard: "Guard", dash: "Foldstep",
+      jump: "Jump", attack: "Attack (hold: charge)", dodge: "Dodge", guard: "Guard", art: "Ink Art (down: Mend)", swap: "Swap weapon", dash: "Foldstep",
       interact: "Interact", map: "Map", pause: "Pause",
     },
     binds: U.deepCopy(DEFAULT_BINDS),
@@ -62,6 +64,7 @@
   I.down = (a) => keyList(a).some((k) => I.held.has(k));
   I.pressed = (a) => keyList(a).some((k) => I.pressedSet.has(k));
   I.released = (a) => keyList(a).some((k) => I.releasedSet.has(k));
+  I.keyPressed = (code) => I.pressedSet.has(code);
   I.anyPressed = () => I.pressedSet.size > 0 || I.mouse.pressed;
   I.axisX = () => (I.down("right") ? 1 : 0) - (I.down("left") ? 1 : 0);
   I.axisY = () => (I.down("down") ? 1 : 0) - (I.down("up") ? 1 : 0);
@@ -76,6 +79,14 @@
       ControlLeft: "Ctrl", ControlRight: "R-Ctrl", AltLeft: "Alt", Backspace: "Bksp",
     };
     return map[code] || code;
+  };
+  // gamepad rumble, when the pad supports it and it's the device in use
+  I.rumble = (strength, ms) => {
+    if (!I.usingPad || !navigator.getGamepads) return;
+    for (const pad of navigator.getGamepads()) {
+      const va = pad && pad.vibrationActuator;
+      if (va && va.playEffect) va.playEffect("dual-rumble", { duration: ms, strongMagnitude: strength, weakMagnitude: strength * 0.6 }).catch(() => {});
+    }
   };
   I.label = (action) => I.keyName((I.binds[action] || [])[0]);
 

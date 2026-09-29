@@ -152,6 +152,7 @@
     miniboss: { root: 50, scale: MINOR, prog: [0, 0, 5, 4], bpm: 100, pad: 0.4, piano: 0.0, ostinato: true, perc: "light", bright: 900 },
     boss: { root: 48, scale: MINOR, prog: [0, 0, 5, 6, 0, 0, 3, 4], bpm: 112, pad: 0.5, piano: 0.0, ostinato: true, perc: "heavy", bright: 1300 },
     ending: { root: 58, scale: MAJOR, prog: [0, 5, 3, 4], bpm: 50, pad: 0.6, piano: 0.32, arp: true, bells: true, bright: 900 },
+    prologue: { root: 50, scale: MINOR, prog: [0, 5, 3, 4, 0, 5, 6, 4], bpm: 48, pad: 0.75, piano: 0.3, arp: true, bells: true, bright: 850, richer: true },
     void: { root: 46, scale: MINOR, prog: [0, 6, 5, 6], bpm: 44, pad: 0.7, piano: 0.1, bright: 450, low: true },
     silence: null,
   };
@@ -321,6 +322,16 @@
     fold: () => { noise(0.1, { f: 4000, f2: 1500, q: 1, gain: 0.18 }); tone(600, 0.12, { f2: 1400, gain: 0.07 }); },
     veil: () => { noise(0.3, { f: 2200, f2: 5000, q: 1.2, gain: 0.14 }); },
     ui: () => tone(1200, 0.05, { gain: 0.05, type: "triangle" }),
+    // an enemy is winding up: a dry two-note pen tick, so wind-ups can be heard as well as seen
+    tele: () => { tone(1320, 0.06, { gain: 0.045, type: "triangle" }); tone(1760, 0.08, { gain: 0.04, type: "triangle", delay: 0.06 }); },
+    // the nib is charged: a bright rising pen-ring
+    charged: () => { tone(880, 0.12, { f2: 1320, gain: 0.07, type: "triangle", verb: true }); tone(1760, 0.18, { gain: 0.035, type: "sine", delay: 0.08, verb: true }); },
+    // a Flow pip fills: a wet drop
+    flowPip: () => { tone(620, 0.16, { f2: 980, gain: 0.07, verb: true }); tone(1240, 0.12, { gain: 0.03, delay: 0.05, verb: true }); },
+    // an Ink Art unleashed
+    art: () => { noise(0.35, { f: 2600, f2: 600, q: 1.1, gain: 0.2 }); tone(330, 0.35, { f2: 660, gain: 0.08, type: "triangle", verb: true }); },
+    mendStart: () => { tone(392, 0.6, { f2: 523, gain: 0.05, type: "sine", verb: true }); noise(0.5, { f: 1200, q: 6, gain: 0.05, verb: true }); },
+    kill: () => { noise(0.25, { f: 3000, f2: 900, q: 1.2, gain: 0.12 }); tone(520, 0.2, { f2: 260, gain: 0.06, type: "triangle" }); },
     uiOk: () => { tone(900, 0.08, { gain: 0.06, type: "triangle" }); tone(1350, 0.1, { gain: 0.05, type: "triangle", delay: 0.06 }); },
     uiNo: () => tone(260, 0.15, { gain: 0.07, type: "triangle", f2: 200 }),
     death: () => { tone(300, 2, { f2: 60, gain: 0.2, type: "triangle", verb: true }); noise(1.5, { f: 900, f2: 100, gain: 0.2 }); },
