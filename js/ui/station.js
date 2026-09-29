@@ -8,7 +8,8 @@
     constructor(G, station) {
       this.G = G; this.station = station; this.pause = true; this.t = 0; this.sel = 0; this.view = "card";
       this.items = [
-        { id: "redraw", label: () => "Redraw weapon" },
+        { id: "redraw", label: () => (station.d.desk ? "Draw a weapon" : "Redraw weapon") },
+        { id: "loadout", label: () => "Margin notes & loadout" + (station.d.desk ? "  ·  shop" : "") },
         { id: "pigment", label: () => "Infuse pigment:  " + LD.Elements.name(G.S.weapon.element) },
         { id: "inspect", label: () => (this.view === "card" ? "Inspect the element wheel" : "Inspect weapon") },
         { id: "map", label: () => "View map" },
@@ -18,7 +19,9 @@
     }
     choose(id) {
       const G = this.G, S = G.S;
+      if (id === "loadout") { A.sfx.uiOk(); G.pushOverlay(new LD.Loadout.Menu(G, this.station)); return; }
       if (id === "redraw") {
+        if (!this.station.d.desk) { A.sfx.uiNo(); this.note = "Only the Bindery desk has ink and paper enough to draw a weapon."; this.noteT = 3; return; }
         A.sfx.uiOk();
         G.pushOverlay(new LD.DrawDesk(G, this.station, (GG, formed) => { if (formed) { this.done = true; GG.onWeaponFormed(); } }));
       } else if (id === "pigment") {
@@ -42,7 +45,7 @@
       if (I.pressed("mDown")) { this.sel = (this.sel + 1) % this.items.length; A.sfx.ui(); }
       const m = I.mouse;
       this.items.forEach((it, i) => {
-        const y = 210 + i * 62;
+        const y = 210 + i * 56;
         if (m.x > 700 && m.x < 1120 && m.y > y - 34 && m.y < y + 16) { if (this.sel !== i && (m.pressed || m.inside)) this.sel = i; if (m.pressed) this.choose(it.id); }
       });
       if (I.pressed("confirm")) this.choose(this.items[this.sel].id);
@@ -65,7 +68,7 @@
       LD.UIKit.heading(ctx, this.station.d.desk ? "The Bindery Desk" : "A Standing Bookmark", 900, 126, 32);
       Art.text(ctx, "Rested. Health restored. The page remembers you here.", 900, 170, 18, { align: "center", color: "#5a4a3a" });
       this.items.forEach((it, i) => {
-        const y = 210 + i * 62, sel = i === this.sel;
+        const y = 210 + i * 56, sel = i === this.sel;
         ctx.font = "30px " + Art.HAND;
         if (sel) LD.UIKit.selector(ctx, 750, y, ctx.measureText(it.label()).width, 30, "#7a1f16", G.time, i * 11 + 3, "left");
         else { ctx.fillStyle = "rgba(74,36,24,0.45)"; ctx.beginPath(); ctx.arc(734, y - 9, 2.2, 0, 7); ctx.fill(); }

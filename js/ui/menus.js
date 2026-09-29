@@ -112,9 +112,10 @@
       const items = [];
       if (LD.Save.exists()) items.push({ id: "continue", label: "Continue" });
       items.push({ id: "new", label: "New Draft" });
+      items.push({ id: "prologue", label: "Prologue" });
       items.push({ id: "howto", label: "How to Play" });
       items.push({ id: "settings", label: "Settings" });
-      this.menu = new ListMenu(items, { x: 250, y: 440, gap: 54, size: 34, align: "left", width: 300 });
+      this.menu = new ListMenu(items, { x: 250, y: 436, gap: 46, size: 32, align: "left", width: 300 });
     }
     update(dt, G) {
       this.t += dt;
@@ -131,7 +132,8 @@
       else if (it.id === "new") {
         if (LD.Save.exists() && !this.confirmNew) { this.confirmNew = true; it.label = "New Draft (erases save — confirm)"; return; }
         G.newGame();
-      } else if (it.id === "howto") G.pushOverlay(new HowTo());
+      } else if (it.id === "prologue") G.pushOverlay(new LD.Prologue(G, () => A.play("title")));
+      else if (it.id === "howto") G.pushOverlay(new HowTo());
       else if (it.id === "settings") G.pushOverlay(new Settings(G));
     }
     draw(ctx, G) {
@@ -200,11 +202,11 @@
     draw(ctx) {
       ctx.save(); book(ctx, Math.min(1, this.t * 4), 501, 502);
       K.heading(ctx, "Controls", 360, 120, 38);
-      const rows = [["left", "right"], ["jump"], ["attack"], ["up", "attack"], ["down", "attack"], ["dodge"], ["guard"], ["dash"], ["interact"], ["map"], ["pause"]];
-      const names = ["Move", "Jump (hold = higher)", "Attack (combo)", "Upward strike", "Downward strike (air, bounces)", "Dodge — brief invulnerability", "Guard — blocks from the front, costs stamina", "Foldstep (once earned)", "Interact / talk / rest", "Map", "Pause & journal"];
+      const rows = [["left", "right"], ["jump"], ["attack"], ["attack"], ["up", "attack"], ["down", "attack"], ["dodge"], ["guard"], ["art"], ["down", "art"], ["swap"], ["dash"], ["interact"], ["map"], ["pause"]];
+      const names = ["Move", "Jump (hold = higher)", "Attack (combo)", "Hold, release: charged strike", "Upward strike", "Downward strike (air, bounces)", "Dodge — through a blow for a close call", "Guard — raise just in time to parry", "Ink Art — spend a bead of Flow", "Hold: Mend — heal with a bead of Flow", "Swap between your two drawn weapons", "Foldstep (once earned)", "Interact / talk / rest", "Map", "Pause & journal"];
       rows.forEach((r, i) => {
-        const y = 178 + i * 40;
-        if (i % 2) { ctx.fillStyle = "rgba(120,90,50,0.08)"; ctx.fillRect(118, y - 24, 484, 36); }
+        const y = 168 + i * 29.5;
+        if (i % 2) { ctx.fillStyle = "rgba(120,90,50,0.08)"; ctx.fillRect(118, y - 20, 484, 29); }
         let kx = 132;
         r.forEach((a, j) => {
           if (j) { Art.text(ctx, "+", kx + 2, y + 4, 20, { color: "#6b5a44" }); kx += 16; }
@@ -212,7 +214,7 @@
           const w = Math.max(28, ctx.measureText(I.label(a)).width + 16);
           K.keycap(ctx, I.label(a), kx + w / 2, y - 4); kx += w + 4;
         });
-        Art.text(ctx, names[i], 262, y + 2, 21, { color: "#2a1a10" });
+        Art.text(ctx, names[i], 262, y + 2, 19, { color: "#2a1a10" });
       });
       Art.text(ctx, "gamepad: A jump · X attack · B dodge · LB guard · RB foldstep · Y interact", 360, 612, 16, { align: "center", color: "#6b5a44" });
       K.heading(ctx, "The Book's Rules", 920, 120, 38);
@@ -223,6 +225,7 @@
         "Ink wells (+15) and hidden caches (+25) refill your pen.",
         "Recovered pigments infuse your weapon. Water overpowers Fire.",
         "Every attack has a wind-up and a recovery. Dodging and guarding spend stamina; run dry and you must back off.",
+        "Fighting well — hits, parries, close calls, critical blows on a reeling foe — gathers Flow. Spend it on your weapon's Ink Art, or kneel to Mend.",
         "Resting at a station heals and saves. Falling in battle returns you there.",
       ];
       let y = 178;

@@ -13,6 +13,8 @@
   H.reset = (S) => { H.inkShown = S.ink; H.thoughts = []; H.card = null; H.barkQ = null; H.area = null; H.boss = null; };
   H.inkPulse = (n) => { H.inkFlash = 1; };
   H.hpPulse = () => { H.hpFlash = 1; };
+  H.flowPulse = () => { H.flowFlash = 1; };
+  H.weaponSwap = () => { H.swapFlash = 1; };
   H.thought = (text) => { if (H.thoughts.some((t) => t.text === text)) return; H.thoughts.push({ text, t: 0, dur: Math.max(3.2, text.length * 0.055) }); };
   H.titleCard = (name, sub) => { H.card = { name, sub, t: 0, dur: 3.4 }; };
   H.bark = (who, text) => { H.barkQ = { who, text, t: 0, dur: 3.2 }; };
@@ -23,6 +25,9 @@
     H.inkShown = U.damp(H.inkShown, G.S.ink, 6, dt);
     H.inkFlash = Math.max(0, H.inkFlash - dt * 1.5);
     H.hpFlash = Math.max(0, H.hpFlash - dt * 2);
+    H.flowFlash = Math.max(0, (H.flowFlash || 0) - dt * 2.5);
+    H.swapFlash = Math.max(0, (H.swapFlash || 0) - dt * 3);
+    H.flowShown = U.damp(H.flowShown || 0, G.S.flow || 0, 8, dt);
     H.objT = Math.max(0, H.objT - dt);
     if (H.thoughts.length) { const t = H.thoughts[0]; t.t += dt; if (t.t > t.dur) H.thoughts.shift(); }
     if (H.card) { H.card.t += dt; if (H.card.t > H.card.dur) H.card = null; }
@@ -141,6 +146,37 @@
     return p;
   }
 
+  // Flow: three beads of wet ink hanging off the reservoir. A full bead glows and can pay for
+  // an Ink Art; Mend also costs one.
+  function flow(ctx, cx, cy, S, t) {
+    const F = D.flow, v = H.flowShown || 0, n = Math.round(F.max / F.pip);
+    ctx.save();
+    // the inked stem the beads hang from
+    ctx.strokeStyle = "rgba(21,16,13,0.85)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx, cy, 47, Math.PI * 0.62, Math.PI * 1.08); ctx.stroke();
+    for (let i = 0; i < n; i++) {
+      const a = Math.PI * (0.66 + i * 0.19), bx = cx + Math.cos(a) * 47, by = cy + Math.sin(a) * 47;
+      const f = U.clamp((v - i * F.pip) / F.pip, 0, 1), full = f >= 0.999;
+      ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.beginPath(); ctx.arc(bx + 1, by + 1.5, 9, 0, 7); ctx.fill();
+      ctx.fillStyle = "rgba(226,216,196,0.95)"; ctx.beginPath(); ctx.arc(bx, by, 9, 0, 7); ctx.fill();
+      if (f > 0) {
+        ctx.save(); ctx.beginPath(); ctx.arc(bx, by, 7, 0, 7); ctx.clip();
+        const g = ctx.createLinearGradient(0, by - 8, 0, by + 8);
+        g.addColorStop(0, S.weapon.element === "water" ? "#4f8fd0" : "#2a3a66"); g.addColorStop(1, "#0b0e1a");
+        ctx.fillStyle = g; ctx.fillRect(bx - 8, by + 8 - f * 16, 16, 16);
+        ctx.restore();
+      }
+      if (full) {
+        ctx.save(); ctx.globalCompositeOperation = "lighter";
+        Art.glow(ctx, bx, by, 18 + Math.sin(t * 4 + i) * 3, S.weapon.element === "water" ? "rgba(110,170,240,0.7)" : "rgba(150,170,240,0.55)", 0.8 + (H.flowFlash || 0) * 0.6);
+        ctx.restore();
+        ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.beginPath(); ctx.arc(bx - 2.5, by - 2.5, 1.8, 0, 7); ctx.fill();
+      }
+      ctx.strokeStyle = Art.INK; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(bx, by, 9, 0, 7); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   function health(ctx, x, y, S, t) {
     const per = D.player.hpPerPip, n = D.player.maxHp / per;
     // a pen line threading the drops together, with a curl at the end
@@ -240,6 +276,15 @@
     ctx.restore();
     Art.text(ctx, wd.name + (el !== "none" ? " · " + LD.Elements.name(el) : ""), tx + 68, y + 6, 18, { color: Art.INK });
     LD.UIKit.pin(ctx, tx + 164, y - 13, "#7a5a2a");
+    if (S.spare) {
+      // the weapon in reserve, and the key that swaps it in
+      const sw = D.weapons[S.spare.cls];
+      ctx.save(); ctx.globalAlpha *= 0.85 + (H.swapFlash || 0) * 0.15;
+      ctx.drawImage(Art.parchment(150, 28, 33), tx + 14, y + 22);
+      Art.text(ctx, "⇄ [" + I.label("swap") + "]  " + sw.name + (S.spare.element && S.spare.element !== "none" ? " · " + LD.Elements.name(S.spare.element) : ""), tx + 24, y + 42, 15, { color: "#3a2a1e" });
+      ctx.restore();
+    }
+    if (H.swapFlash > 0) { ctx.save(); ctx.globalCompositeOperation = "lighter"; Art.glow(ctx, tx + 85, y, 90, "rgba(255,225,170,0.5)", H.swapFlash); ctx.restore(); }
     // element badge: a wax seal stamped with the element's glyph, trailing a ribbon
     ctx.fillStyle = el === "water" ? "#1f4f86" : "#7a1f16";
     Art.brush(ctx, [x - 4, y + 10, x - 8, y + 26, x - 12, y + 36], 7, { seed: 8, taperStart: 0, taperEnd: 0.1, jitter: 0 });
@@ -254,7 +299,10 @@
   // ---------------------------------------------------------------- main draw
   H.draw = (ctx, G) => {
     const S = G.S, p = G.player, t = G.time;
-    if (!G.hudHidden) {
+    const cineA = LD.Cinema ? LD.Cinema.hud : 1;
+    if (!G.hudHidden && cineA > 0.02) {
+      ctx.save(); ctx.globalAlpha *= cineA;
+      flow(ctx, 58, 66, S, t);
       reservoir(ctx, 58, 62, S, t);
       health(ctx, 124, 36, S, t);
       if (p) stamina(ctx, 112, 100, p, t);
@@ -279,12 +327,13 @@
         LD.UIKit.pin(ctx, ox + 24, 28);
         ctx.restore();
       }
+      ctx.restore();
     }
     // boss bar
-    if (H.boss && !H.boss.dead) {
+    if (H.boss && !H.boss.dead && cineA > 0.02) {
       const bw = 560, bx = U.VIEW_W / 2 - bw / 2, by = U.VIEW_H - 50;
       const fire = H.boss.k === "marshal";
-      ctx.save();
+      ctx.save(); ctx.globalAlpha *= cineA;
       // name on a ribbon banner
       ctx.font = "26px " + Art.TITLE;
       const nw = ctx.measureText(H.boss.name).width;
@@ -322,20 +371,33 @@
       }
       ctx.strokeStyle = "rgba(201,161,74,0.55)"; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(bx - 4, by - 7); ctx.lineTo(bx + bw + 4, by - 7); ctx.moveTo(bx - 4, by + 15); ctx.lineTo(bx + bw + 4, by + 15); ctx.stroke();
+      // stagger (poise) under the bar: empty it and the boss reels, taking critical hits
+      const B = H.boss, maxP = (B.data && B.data.poise) || 1;
+      const broken = B.state === "stagger" || B.state === "stun";
+      const pf = broken ? 0 : U.clamp(B.poise / maxP, 0, 1);
+      H.poiseShown = U.damp(H.poiseShown == null ? 1 : H.poiseShown, pf, 10, 1 / 60);
+      const pw = bw * 0.5, px = U.VIEW_W / 2 - pw / 2, py = by + 22;
+      ctx.fillStyle = "rgba(21,16,13,0.7)"; ctx.fillRect(px - 2, py - 2, pw + 4, 7);
+      ctx.fillStyle = "rgba(236,225,201,0.75)"; ctx.fillRect(px, py, pw * H.poiseShown, 3);
+      if (broken) {
+        const bl = 0.6 + Math.sin(G.time * 12) * 0.4;
+        Art.text(ctx, "BROKEN — strike!", U.VIEW_W / 2, py + 22, 18, { align: "center", font: "title", color: "rgba(255,225,170," + bl + ")", outline: 3, outlineColor: "rgba(0,0,0,0.6)" });
+      }
       if (fire) {
         // phase marks, shaped as small flames
         for (const m of [0.66, 0.33]) {
           const mx = bx + bw * m;
           ctx.fillStyle = "#f1e6cf"; ctx.fillRect(mx - 1, by - 5, 2.5, 18);
-          Art.elementGlyph(ctx, "fire", mx, by + 25, 6, f > m ? "#ffb35a" : "rgba(241,230,207,0.5)");
+          Art.elementGlyph(ctx, "fire", mx, by + 11, 5, f > m ? "#ffb35a" : "rgba(241,230,207,0.5)");
         }
       }
       ctx.restore();
     }
     // area name
+    const lift = LD.Cinema ? LD.Cinema.bars * 62 : 0;
     if (H.area) {
       const k = H.area.t, a = Math.min(1, k * 2, (H.area.dur - k) * 1.5);
-      ctx.save(); ctx.globalAlpha = Math.max(0, a);
+      ctx.save(); ctx.globalAlpha = Math.max(0, a); ctx.translate(0, -lift);
       // soft ink wash behind the lettering
       ctx.save(); ctx.globalAlpha *= 0.5;
       Art.wash(ctx, 250, U.VIEW_H - 80, 250, 55, "#0c0806", 0.9, 21, 3);
@@ -392,7 +454,7 @@
       ctx.font = "23px " + Art.SERIF;
       const w = Math.min(1180, ctx.measureText(th.text).width + 80);
       const img = Art.parchment(Math.ceil(w / 20) * 20, 60, 12, { torn: true });
-      const y0 = H.boss ? U.VIEW_H - 170 : U.VIEW_H - 96;
+      const y0 = (H.boss ? U.VIEW_H - 170 : U.VIEW_H - 96) - lift;
       ctx.drawImage(img, U.VIEW_W / 2 - img.width / 2, y0);
       ctx.save(); ctx.globalAlpha *= 0.6;
       for (const d of [-1, 1]) LD.UIKit.fleuron(ctx, U.VIEW_W / 2 + d * (img.width / 2 - 22), y0 + 30, 0.4, "#4a2418");

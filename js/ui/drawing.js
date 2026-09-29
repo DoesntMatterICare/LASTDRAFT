@@ -185,7 +185,9 @@
       const S = this.G.S, an = this.an, cls = an.cls;
       LD.Ink.spend(S, D.weapons[cls].cost);
       S.redraws++;
+      const prev = S.weapon;
       S.weapon = { cls, strokes: normalize(this.strokes, an, cls), element: S.weapon.element || "none" };
+      LD.Loadout.onNewWeapon(S, prev);
       this.mode = "materialize"; this.mt = 0;
       A.sfx.inkSpend();
       setTimeout(() => A.sfx.page(), 900);
