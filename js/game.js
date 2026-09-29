@@ -45,6 +45,8 @@
   G.applySettings();
 
   G.pushOverlay = (o) => { G.overlays.push(o); };
+  // brief gameplay slow motion (close calls, kills); cutscenes own timeScale themselves
+  G.slowMo = (scale, dur) => { if (!G.cut) G.slow = { scale, t: dur }; };
 
   // ---------------------------------------------------------------- flow
   G.toTitle = () => {
@@ -77,6 +79,8 @@
     G.arenaBurn = 0; G.inkSpotShow = null; G.crane = null; G.pageStair = null; G.pigmentWave = null; G.weaponFly = null;
     C.lock = null; C.focus = null; C.targetZoom = 1; G.timeScale = 1; G.freezePlayer = false;
     HUD.reset(G.S);
+    LD.Cinema.reset();
+    LD.Loadout.apply(G.S);
     G.updateLayers();
   };
 
@@ -133,6 +137,7 @@
   // ---------------------------------------------------------------- interactions
   G.openStation = (st) => {
     const S = G.S;
+    S.checkpoint = null;
     S.hp = D.player.maxHp;
     S.station = { id: st.d.id, room: W.room.id };
     S.room = W.room.id; S.px = st.d.x; S.py = st.d.y;
@@ -149,6 +154,7 @@
     LD.Save.save(S);
     if (!S.flags.firstWeapon) {
       S.flags.firstWeapon = true;
+      setTimeout(() => LD.Loadout.give(G, "quick_quill"), 4200);
       setTimeout(() => HUD.thought("The book read your line and gave it weight. It is yours now — and the ink is spent."), 1400);
     }
   };
@@ -198,19 +204,63 @@
 
   // ---------------------------------------------------------------- bosses
   G.startBoss = (boss, music, lock) => {
+    LD.Telemetry.bossStart(G, boss);
     G.boss = boss; HUD.boss = boss; HUD.bossShown = 1; HUD.bossLag = 1; HUD.bossLagF = 1;
     A.play(music);
     C.lock = lock;
   };
   G.endBoss = () => {
+    LD.Telemetry.bossEnd(G, "win");
     G.boss = null; HUD.boss = null; C.lock = null;
     A.intensity = 0;
     A.play(W.room.music);
   };
 
+  // ---------------------------------------------------------------- cinematic beats
+  // Each beat is shot like a film scene: letterbox bars slide in automatically while a
+  // cutscene runs; LD.Cinema supplies flashes, speed lines, rings, grades and boss cards.
+  const K = LD.Cinema;
+  const settle = () => { C.focus = null; C.targetZoom = 1; K.roll(0); K.desaturate(0); K.grade(null, 0); };
+
+  G.runHartIntro = (hart) => {
+    const p = G.player;
+    LD.Cutscene.start(G, (function* () {
+      p.vx = 0; p.auto = null;
+      A.play("silence");
+      C.focus = { x: (p.cx() + hart.cx()) / 2, y: hart.cy() - 20, rate: 1.6 }; C.targetZoom = 1.15;
+      K.desaturate(0.45); K.roll(-0.02);
+      yield 0.8;
+      C.focus = { x: hart.cx(), y: hart.cy() - 10, rate: 2.2 }; C.targetZoom = 1.4;
+      yield 1.1;
+      A.sfx.hart(); A.sfx.stomp();
+      K.punch(0.12); C.shake(0.55); K.flash("236,225,201", 0.5, 2.5);
+      K.speedLines(hart.cx(), hart.cy(), 1, "21,16,13"); K.ring(hart.cx(), hart.y + hart.h, "236,225,201", 1.1);
+      P.burst(hart.cx(), hart.y + hart.h, 24, "dust", { angle: -Math.PI / 2, spread: 1.6, min: 80, max: 300, p: { color: "rgba(160,170,180,0.6)", size: 6, g: 300 } });
+      yield 0.8;
+      settle();
+      G.startBoss(hart, "miniboss", { x0: 0, x1: W.w * T });
+      K.bossCard(hart.name, hart.title, "#6f8fb0");
+    })());
+  };
+
   G.onHartDefeated = (hart) => {
-    HUD.thought("The half-erased hart settles into the dry basin. Something blue glimmers there.");
-    A.sfx.hart();
+    LD.Cutscene.start(G, (function* () {
+      G.hitstop = 0.18;
+      K.flash("255,250,240", 0.9, 2.2); K.punch(0.16); K.speedLines(hart.cx(), hart.cy(), 1.2);
+      K.ring(hart.cx(), hart.cy(), "236,225,201", 1.2);
+      G.timeScale = 0.3;
+      C.focus = { x: hart.cx(), y: hart.cy(), rate: 3 }; C.targetZoom = 1.4; K.roll(0.03); K.desaturate(0.5);
+      A.sfx.hart();
+      yield 1.2;
+      G.timeScale = 1; K.roll(0);
+      C.targetZoom = 1.2;
+      yield 0.7;
+      K.desaturate(0); K.grade("#3f7fc0", 0.4);
+      HUD.thought("The half-erased hart settles into the dry basin. Something blue glimmers there.");
+      yield 1.8;
+      settle();
+      LD.Loadout.give(G, "swift_mend", { notch: true });
+    })());
   };
 
   G.claimPigment = (altar) => {
@@ -219,17 +269,26 @@
       p.auto = { dir: Math.sign(altar.x - p.cx()), x: altar.x };
       yield () => !p.auto || Math.abs(p.cx() - altar.x) < 8;
       p.auto = null; p.vx = 0;
+      C.focus = { x: p.cx(), y: p.cy() - 30, rate: 2 }; C.targetZoom = 1.45; K.roll(-0.02); K.desaturate(0.7);
+      yield 0.7;
       p.setState("raise");
       A.sfx.pigment();
+      K.speedLines(p.cx(), p.cy() - 40, 1, "63,127,192"); K.punch(0.12);
+      yield 0.6;
       G.pigmentWave = { t: 0 };
-      LD.Camera.shake(0.2);
-      yield 1.4;
+      K.flash("150,195,245", 0.95, 1.2); K.ring(p.cx(), p.cy(), "63,127,192", 1.6); K.ring(p.cx(), p.cy(), "236,225,201", 1);
+      C.shake(0.35);
+      K.desaturate(0); K.grade("#3f7fc0", 0.55); K.roll(0);
+      P.burst(p.cx(), p.cy() - 20, 50, "spark", { min: 80, max: 380, p: { color: "rgba(140,190,245,0.9)", g: -40, size: 4 } });
+      yield 0.8;
       G.S.flags.pigment_water = true;
       G.updateLayers();
       G.reloadRoomKeepPlayer();
       A.play("underground");
-      HUD.titleCard("Water Pigment", "the lost blue returns to Looseleaf Borough");
-      yield 3.2;
+      C.targetZoom = 1.1;
+      K.bossCard("Water Pigment", "the lost blue returns to Looseleaf Borough", "#3f7fc0");
+      yield 3.4;
+      settle();
       HUD.thought("Black fingerprints on the basin. Someone reached it first — and left it.");
       yield 1.5;
       HUD.thought("Rest at a station to infuse your weapon with Water. Far above, a wheel begins to turn.");
@@ -242,19 +301,42 @@
     LD.Cutscene.start(G, (function* () {
       p.vx = 0; p.auto = null;
       A.play("silence");
-      C.focus = { x: boss.cx(), y: boss.y + 40, rate: 2.2 };
-      C.targetZoom = 1.25;
+      // wide establishing shot of the burnt archive, then a slow push onto the ash
+      C.focus = { x: (p.cx() + boss.cx()) / 2, y: boss.y + 20, rate: 1.2 }; C.targetZoom = 0.92;
+      K.grade("#ff7a30", 0.25);
       yield 1.3;
+      C.focus = { x: boss.cx(), y: boss.y + 40, rate: 1.3 }; C.targetZoom = 1.4; K.roll(0.035);
+      yield 1.0;
+      A.sfx.heartbeat(); K.heartbeat();
       boss.introRise = 0;
-      yield () => { boss.introRise = Math.min(1, boss.introRise + 1 / 60); return boss.introRise >= 1; };
-      A.sfx.roar(); C.shake(0.4);
-      P.burst(boss.cx(), boss.cy(), 30, "ember", { min: 80, max: 300, p: { g: 50, size: 3, life: 1.3 } });
-      yield 0.5;
+      yield () => {
+        boss.introRise = Math.min(1, boss.introRise + 1 / 70);
+        if (Math.random() < 0.6) P.add({ kind: "ember", x: boss.cx() + U.rand(-80, 80), y: boss.y + boss.h, vx: U.rand(-20, 20), vy: -U.rand(80, 220), g: -20, size: 3, life: 1.4 });
+        return boss.introRise >= 1;
+      };
+      A.sfx.roar(); A.sfx.fireBurst();
+      G.hitstop = 0.12;
+      C.shake(0.8); K.punch(0.2); K.flash("255,150,70", 0.75, 2);
+      K.speedLines(boss.cx(), boss.cy(), 1.3, "40,10,4"); K.ring(boss.cx(), boss.y + boss.h, "255,120,50", 1.4);
+      K.grade("#ff5a20", 0.5);
+      P.burst(boss.cx(), boss.cy(), 50, "ember", { min: 100, max: 420, p: { g: 50, size: 3, life: 1.5 } });
+      yield 1.0;
+      K.roll(0); C.targetZoom = 1.2;
       yield { say: LD.Speech.marshalIntro };
-      C.focus = null; C.targetZoom = 1;
+      settle(); K.grade("#ff7a30", 0.12);
       boss.beginFight(G);
-      HUD.titleCard(boss.name, boss.title);
+      K.bossCard(boss.name, boss.title, "#e0662a");
+      yield 0.5;
+      K.grade(null, 0);
     })());
+  };
+
+  // mid-fight phase shift: a brief letterboxed "shot" that doesn't stop the fight
+  G.bossPhaseBeat = (boss, rgb = "255,140,60") => {
+    K.hold(1.3);
+    K.flash(rgb, 0.6, 2); K.punch(0.14); C.roll = boss.phase === 3 ? -0.05 : 0.05;
+    K.speedLines(boss.cx(), boss.cy(), 1.1, "40,10,4"); K.ring(boss.cx(), boss.cy(), rgb, 1.5);
+    G.hitstop = Math.max(G.hitstop, 0.1);
   };
 
   G.runMarshalDefeat = (boss) => {
@@ -264,40 +346,56 @@
     LD.Cutscene.start(G, (function* () {
       p.atk = null; p.setState("normal"); p.vx = 0;
       A.play("silence");
-      G.timeScale = 0.25;
-      C.shake(0.6);
-      yield 1.0;
-      G.timeScale = 1;
-      C.focus = { x: boss.cx(), y: boss.y + 60, rate: 2 };
-      C.targetZoom = 1.2;
-      yield 0.8;
+      // the killing blow: freeze, white-out, then heavy slow motion
+      G.hitstop = 0.25;
+      K.flash("255,250,240", 1, 1.4); K.punch(0.22);
+      K.speedLines(boss.cx(), boss.cy(), 1.5); K.ring(boss.cx(), boss.cy(), "21,16,13", 1.3); K.ring(boss.cx(), boss.cy(), "255,140,60", 1.8);
+      G.timeScale = 0.2;
+      C.shake(0.8);
+      C.focus = { x: boss.cx(), y: boss.cy(), rate: 3 }; C.targetZoom = 1.5; K.roll(-0.04); K.desaturate(0.75);
+      yield 1.5;
+      G.timeScale = 1; K.roll(0);
+      C.focus = { x: boss.cx(), y: boss.y + 60, rate: 2 }; C.targetZoom = 1.25;
+      yield 0.6;
       yield { say: LD.Speech.marshalDefeat };
       boss.dissolving = true;
       A.sfx.tear();
+      K.desaturate(0.3); K.grade("#ff9a50", 0.3);
       yield 2.4;
       G.crane = { x: boss.cx(), y: boss.y + 50, t: 0, done: false };
       A.sfx.bell();
-      C.focus = { x: p.cx(), y: p.cy(), rate: 1.5 };
-      yield () => G.crane && G.crane.done;
+      // follow the burning paper crane to the Sketcher's hands
+      yield () => {
+        if (G.crane) C.focus = { x: G.crane.dx != null ? G.crane.dx : G.crane.x, y: (G.crane.dy != null ? G.crane.dy : G.crane.y) + 20, rate: 2.5 };
+        return G.crane && G.crane.done;
+      };
       G.crane = null;
       S.flags.foldstep = true;
       G.updateLayers();
       A.sfx.pigment();
+      C.focus = { x: p.cx(), y: p.cy(), rate: 2 }; C.targetZoom = 1.35;
+      K.flash("255,220,170", 0.85, 1.8); K.ring(p.cx(), p.cy(), "255,200,140", 1.3); K.punch(0.12); K.desaturate(0);
       P.burst(p.cx(), p.cy(), 40, "spark", { min: 60, max: 260, p: { color: "rgba(255,200,140,0.9)", g: -30, size: 4 } });
       p.setState("raise");
-      HUD.titleCard("FOLDSTEP", "the Fire Keeper's gift — fold through creases, gaps and blows");
-      yield 2.2;
+      K.bossCard("Foldstep", "the Fire Keeper's gift — fold through creases, gaps and blows", "#c9a14a");
+      yield 2.4;
       // perform it once, immediately
       p.facing = 1; p.setState("normal");
       p.startFold(G, 1, 0);
+      K.speedLines(p.cx(), p.cy(), 0.8, "236,225,201");
       yield 0.6;
-      C.focus = null; C.targetZoom = 1;
+      // the one behind it all speaks from the dark
+      C.focus = null; C.targetZoom = 1.1; K.grade("#4a2060", 0.5); K.desaturate(0.55);
+      A.sfx.whisper(); A.sfx.heartbeat(); K.heartbeat();
+      yield 0.6;
       yield { say: LD.Speech.inkSpotAfterBoss };
+      settle();
       G.endBoss();
       G.reloadRoomKeepPlayer();
       A.play("margin");
       G.checkpoint();
       HUD.thought("Foldstep: [" + I.label("dash") + "] + a direction. Jump over the burned floor, then fold across.");
+      setTimeout(() => LD.Loadout.give(G, "last_line", { notch: true }), 3800);
     })());
   };
 
@@ -306,18 +404,26 @@
     LD.Cutscene.start(G, (function* () {
       p.vx = 0;
       yield () => p.onGround;
+      A.play("silence");
       G.inkSpotShow = { x: 28 * T, y: 8 * T, s: 0.8, a: 0, flip: true, state: "appear", t: 0 };
-      C.focus = { x: 24 * T, y: 6 * T, rate: 2 };
+      C.focus = { x: 24 * T, y: 6 * T, rate: 1.2 }; C.targetZoom = 1.2;
+      K.desaturate(0.75); K.grade("#4a2a5a", 0.35); K.roll(0.02);
       A.sfx.whisper();
       yield 2.2;
+      // he turns — snap-zoom onto the face
       G.inkSpotShow.state = "turn";
-      A.sfx.heartbeat();
-      yield 1.0;
+      C.focus = { x: 28 * T, y: 8 * T - 90, rate: 5 }; C.targetZoom = 1.7;
+      A.sfx.heartbeat(); K.heartbeat(); K.punch(0.1); K.roll(-0.03);
+      yield 0.55;
+      A.sfx.heartbeat(); K.heartbeat();
+      yield 0.55;
       G.inkSpotShow.state = "dissolve";
       A.sfx.tear();
+      K.flash("12,6,10", 0.7, 1.6); K.speedLines(28 * T, 8 * T - 80, 1, "21,16,13");
       yield 1.3;
       G.inkSpotShow = null;
-      C.focus = null;
+      settle();
+      A.play(W.room.music);
       S.flags.sawInkSpot = true;
       HUD.thought("Someone was watching from the rooftops. Someone drawn in a hurry.");
     })());
@@ -330,28 +436,32 @@
       p.auto = { dir: -1, x: 15 * T };
       yield () => !p.auto;
       p.vx = 0; p.facing = -1;
-      C.focus = { x: 9 * T, y: 9 * T, rate: 1.1 };
-      C.targetZoom = 0.9;
+      C.focus = { x: 9 * T, y: 9 * T, rate: 1.1 }; C.targetZoom = 0.9;
+      K.desaturate(0.5); K.grade("#3a2050", 0.4);
       yield 2.2;
       G.inkSpotShow = { x: 5 * T, y: 17.5 * T, s: 1.9, a: 0, flip: false, state: "rise", t: 0, rise: 0 };
-      A.sfx.whisper(); A.sfx.heartbeat();
-      yield 2.6;
+      A.sfx.whisper();
+      C.focus = { x: 7 * T, y: 10 * T, rate: 0.8 }; C.targetZoom = 1.12; K.roll(-0.03);
+      for (let i = 0; i < 3; i++) { A.sfx.heartbeat(); K.heartbeat(); K.punch(0.04); yield 0.87; }
       yield { say: LD.Speech.ending };
       G.inkSpotShow.state = "reach";
+      A.sfx.roar(); C.shake(0.5); K.punch(0.16); K.flash("20,8,20", 0.5, 2);
+      K.speedLines(5 * T, 17.5 * T - 200, 1.2, "21,16,13");
       yield 1.2;
       G.inkSpotShow.state = "sink";
-      A.sfx.tear();
+      A.sfx.tear(); K.roll(0);
       yield 2.0;
       G.inkSpotShow = null;
       G.pageStair = { t: 0 };
       A.sfx.page();
+      K.desaturate(0); K.grade("#f0c080", 0.3); C.targetZoom = 1;
       yield 2.2;
       S.flags.chapterDone = true;
       G.checkpoint();
       A.play("ending");
-      HUD.titleCard("Chapter 1 complete", "the corruption runs far deeper than Looseleaf Borough");
-      yield 3.6;
-      C.focus = null; C.targetZoom = 1;
+      K.bossCard("Chapter 1 complete", "the corruption runs far deeper than Looseleaf Borough", "#c9a14a", 4);
+      yield 3.8;
+      settle();
       G.pushOverlay(new LD.Menus.EndCard(G));
     })());
   };
@@ -360,19 +470,30 @@
     const p = G.player;
     G.freezePlayer = true;
     p.setPos(14 * T, 3 * T);
-    G.fadeA = 1;
-    G.storyText = { lines: ["Once, this book was full of colour.", "Now its pages fade, and its ink bleeds loose.", "Something has been taking what was drawn.", "A page-mender has been sent to fix it."], t: 0 };
+    G.fadeA = 0;
+    const pro = new LD.Prologue(G);
+    G.pushOverlay(pro);
     LD.Cutscene.start(G, (function* () {
-      yield () => !G.storyText;
+      yield () => !G.overlays.includes(pro);
+      G.fadeA = 1;
+      A.play(W.room.music);
+      C.focus = { x: 14 * T, y: 4 * T, rate: 6 }; C.targetZoom = 1.35; K.roll(-0.03);
+      yield 0.4;
       G.tearFx = { t: 0 };
       A.sfx.tear();
+      K.flash("255,240,210", 0.6, 2); K.punch(0.08); C.shake(0.2);
       yield 0.9;
+      // drop with the Sketcher
       G.freezePlayer = false;
+      C.focus = null; K.roll(0.015);
       yield () => p.onGround;
-      C.shake(0.3);
-      A.sfx.land();
-      P.burst(p.cx(), p.feet(), 20, "scrap", { angle: -Math.PI / 2, spread: 1.4, min: 60, max: 260, p: { color: "#e2d4b6", g: 500, size: 6 } });
+      G.hitstop = 0.08;
+      C.shake(0.55); K.punch(0.12); K.roll(0);
+      K.ring(p.cx(), p.feet(), "226,212,182", 0.6); K.speedLines(p.cx(), p.cy(), 0.7, "236,225,201");
+      A.sfx.land(); A.sfx.stomp();
+      P.burst(p.cx(), p.feet(), 26, "scrap", { angle: -Math.PI / 2, spread: 1.4, min: 60, max: 300, p: { color: "#e2d4b6", g: 500, size: 6 } });
       yield 1.0;
+      C.targetZoom = 1;
       HUD.areaName("The Margin");
       yield 0.6;
     })());
@@ -381,7 +502,16 @@
   G.onEnterRoom = (id, first) => {
     const S = G.S;
     if (id === "bindery" && !S.flags.metQuillon) {
-      LD.Cutscene.start(G, (function* () { yield 0.8; G.talk("quillon"); yield () => !G.overlays.length; })());
+      const p = G.player;
+      LD.Cutscene.start(G, (function* () {
+        const q = W.objs.find((o) => o.k === "quillon");
+        yield 0.5;
+        if (q) { C.focus = { x: (p.cx() + q.x) / 2, y: q.y - 70, rate: 1.4 }; C.targetZoom = 1.2; K.grade("#f0b070", 0.3); }
+        yield 1.1;
+        G.talk("quillon");
+        yield () => !G.overlays.length;
+        settle();
+      })());
     }
     if (id === "canals" && first) setTimeout(() => HUD.thought("The canals are bone dry. The river painted on the walls has gone pale."), 1200);
     if (id === "cistern" && !S.flags.boss_hart && first) setTimeout(() => HUD.thought("Something half-erased stirs in the dry basin."), 800);
@@ -391,6 +521,7 @@
 
   G.onPlayerDeath = () => {
     G.S.deaths++;
+    LD.Telemetry.death(G);
     G.dying = { t: 0 };
     HUD.boss = null;
   };
@@ -464,6 +595,7 @@
     if (G.mode !== "play") return;
 
     HUD.update(dt, G);
+    LD.Cinema.update(dt, G);
     HUD.objective(LD.Quest.current(G.S));
     G.overlay = G.overlays[G.overlays.length - 1] || null;
     if (G.fadeQ) {
@@ -500,14 +632,20 @@
     } else if (!G.cut && !G.transition) {
       if (I.pressed("pause")) { G.pushOverlay(new LD.Menus.Pause(G)); return; }
       if (I.pressed("map")) { G.pushOverlay(new LD.MapView(G)); return; }
+      if (I.keyPressed("F9")) { G.pushOverlay(new LD.Telemetry.Report()); return; }
     }
 
-    if (!G.dying) G.S.time += dt;
+    if (!G.dying) { G.S.time += dt; LD.Telemetry.tick(G, dt); }
     G.inputLocked = !!G.transition;
     LD.Cutscene.step(G, dt);
 
+    if (G.slow) {
+      G.slow.t -= dt;
+      if (G.slow.t <= 0 || G.cut) { G.slow = null; if (!G.cut) G.timeScale = 1; }
+      else G.timeScale = G.slow.scale;
+    }
     let wdt = dt * G.timeScale;
-    if (G.hitstop > 0) { G.hitstop -= dt; wdt = 0; }
+    if (G.hitstop > 0) { G.hitstop -= dt; wdt = 0; if (G.player && !G.freezePlayer) G.player.catchInput(); }
     if (wdt > 0) {
       if (!G.freezePlayer) G.player.update(wdt, G);
       W.enemies = W.enemies.filter((e) => e.update(wdt, G) !== false && !(e.dead && e.deathT > 3 && !e.isBoss));
@@ -569,6 +707,10 @@
     const AS = LD.Assets, RL = LD.ArtManifest.roomLayers, rid = W.room.id;
     ctx.drawImage(AS.room(rid, "sky") || W.bg.sky, 0, 0, U.VIEW_W, U.VIEW_H);
     ctx.save();
+    if (Math.abs(C.roll || 0) > 0.0005) {
+      // cinematic dutch angle, over-scanned so the corners stay covered
+      ctx.translate(U.VIEW_W / 2, U.VIEW_H / 2); ctx.rotate(C.roll); ctx.scale(1 + Math.abs(C.roll) * 1.4, 1 + Math.abs(C.roll) * 1.4); ctx.translate(-U.VIEW_W / 2, -U.VIEW_H / 2);
+    }
     ctx.scale(z, z);
     ctx.translate(-Math.round((C.x + C.ox) * 10) / 10, -Math.round((C.y + C.oy) * 10) / 10);
     if (AS.hasPaintedBackdrop(rid)) { for (const l of ["far", "mid", "near"]) { const im = AS.room(rid, l); if (im) AS.drawLayer(ctx, im, RL[l], W.room, C); } }
@@ -703,6 +845,7 @@
       drawWorld();
       ctx.drawImage(vignette, 0, 0);
       ctx.save(); ctx.globalCompositeOperation = "multiply"; ctx.globalAlpha = 0.16; ctx.fillStyle = ctx.createPattern(Art.grain(), "repeat"); ctx.fillRect(0, 0, U.VIEW_W, U.VIEW_H); ctx.restore();
+      LD.Cinema.drawScreen(ctx, G);
       HUD.draw(ctx, G);
       if (G.weaponFly) {
         const f = G.weaponFly, p = G.player, k = U.easeIn(f.t / 0.5);
@@ -713,6 +856,7 @@
         LD.drawWeaponStrokes(ctx, G.S.weapon.strokes, len, G.S.weapon.element, Art.boil);
         ctx.restore();
       }
+      LD.Cinema.drawTop(ctx, G);
       for (const o of G.overlays) o.draw(ctx, G);
       if (G.fadeA > 0) { ctx.fillStyle = "rgba(12,8,6," + G.fadeA + ")"; ctx.fillRect(0, 0, U.VIEW_W, U.VIEW_H); }
       if (G.dying && G.dying.t > 1.6) Art.text(ctx, "The line breaks…", U.VIEW_W / 2, U.VIEW_H / 2, 44, { align: "center", font: "serif", color: "#e6d9bc", alpha: U.clamp((G.dying.t - 1.6) / 0.6, 0, 1) });
