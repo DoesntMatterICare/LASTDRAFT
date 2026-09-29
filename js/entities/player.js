@@ -54,7 +54,7 @@
       this.cloak.forEach((c, i) => { c.x = c.px = this.cx() - this.facing * i * 6; c.y = c.py = this.y + 16 + i * 6; });
       this.scarf.forEach((c, i) => { c.x = c.px = this.cx() - this.facing * i * 5; c.y = c.py = this.y + 12; });
     }
-    iframes() { return this.invuln > 0 || (this.state === "dodge" && this.stateT >= PD.dodge.iStart && this.stateT <= PD.dodge.iEnd) || this.state === "fold" || this.state === "dead"; }
+    iframes() { return this.invuln > 0 || (this.state === "charged" && this.cs && this.cs.phase === "active" && this.cs.d.iframes) || (this.state === "art" && this.art && this.art.iframes) || (this.state === "dodge" && this.stateT >= PD.dodge.iStart && this.stateT <= PD.dodge.iEnd) || this.state === "fold" || this.state === "dead"; }
     weaponData(S) { return D.weapons[S.weapon.cls] || D.weapons.nib; }
 
     setState(s) { this.state = s; this.stateT = 0; }
@@ -76,6 +76,10 @@
       this.jumpBuf = Math.max(0, this.jumpBuf - dt);
       this.atkBuf = Math.max(0, this.atkBuf - dt);
       this.flash = Math.max(0, this.flash - dt);
+      this.riposteT = Math.max(0, (this.riposteT || 0) - dt);
+      this.chargedBuf = Math.max(0, (this.chargedBuf || 0) - dt);
+      this.swapCD = Math.max(0, (this.swapCD || 0) - dt);
+      this.swapStrikeT = Math.max(0, (this.swapStrikeT || 0) - dt);
       if (this.trail) { this.trail.life -= dt; if (this.trail.life <= 0) this.trail = null; }
 
       if (this.state === "dead") {
@@ -91,11 +95,16 @@
       }
 
       // --- input
-      let ax = 0, ay = 0, jumpP = false, jumpH = false, atkP = false, dodgeP = false, dashP = false, guardH = false, interactP = false;
+      let ax = 0, ay = 0, jumpP = false, jumpH = false, atkP = false, dodgeP = false, dashP = false, guardH = false, interactP = false, artP = false, artH = false, atkH = false, swapP = false;
       if (this.control && !G.inputLocked) {
         ax = I.axisX(); ay = I.axisY();
-        jumpP = I.pressed("jump"); jumpH = I.down("jump");
-        atkP = I.pressed("attack"); dodgeP = I.pressed("dodge"); dashP = I.pressed("dash");
+        // presses made during hit-stop frames were caught by catchInput(); honour them now
+        const pend = this.pending || (this.pending = new Set());
+        const pr = (a) => I.pressed(a) || pend.has(a);
+        jumpP = pr("jump"); jumpH = I.down("jump");
+        atkP = pr("attack"); dodgeP = pr("dodge"); dashP = pr("dash");
+        artP = pr("art"); artH = I.down("art"); atkH = I.down("attack"); swapP = pr("swap");
+        pend.clear();
         guardH = I.down("guard"); interactP = I.pressed("interact") || (I.pressed("up") && this.interactTarget && this.onGround);
       } else if (this.auto) {
         ax = this.auto.dir || 0;
@@ -127,7 +136,9 @@
             else this.doJump();
           }
           if (this.jumping && !jumpH && this.vy < 0) { this.vy *= PD.jumpCut; this.jumping = false; }
-          if (this.atkBuf > 0) this.startAttack(G, ay);
+          // a fresh defensive press always beats a buffered attack
+          if (dodgeP && this.onGround && !this.exhausted) { this.atkBuf = 0; this.startDodge(G, ax); }
+          else if (this.atkBuf > 0) this.startAttack(G, ay);
           else if (dashP && S.flags.foldstep) this.startFold(G, ax, ay);
           else if (dashP && !S.flags.foldstep && !this._foldHintT) { this._foldHintT = 1; }
           else if (dodgeP && this.onGround) this.startDodge(G, ax);
@@ -140,6 +151,7 @@
           if (this.state === "attack" && this.atk && this.atk.phase === "recovery") {
             if (dodgeP && this.onGround && !this.exhausted) { this.atk = null; this.startDodge(G, ax); }
             else if (dashP && S.flags.foldstep) { this.atk = null; this.startFold(G, ax, ay); }
+            else if (this.jumpBuf > 0 && this.coyote > 0 && this.atk.t > this.atk.recovery * 0.3) { this.atk = null; this.setState("normal"); this.doJump(); }
           }
           if (this.jumping && !jumpH && this.vy < 0) { this.vy *= PD.jumpCut; this.jumping = false; }
           break;
@@ -177,6 +189,9 @@
           if (this.atkBuf > 0) { this.setState("normal"); this.startAttack(G, ay); }
           break;
         }
+        case "charged": this.updateCharged(G, dt); break;
+        case "art": this.updateArt(G, dt); break;
+        case "mend": this.updateMend(G, dt, artH); break;
         case "hurt": {
           this.vx = U.approach(this.vx, 0, 900 * dt);
           if (this.stateT > 0.32) this.setState("normal");
@@ -195,11 +210,63 @@
         }
       }
       if (this._veilSnd) this._veilSnd = Math.max(0, this._veilSnd - dt);
+      const canAct = this.state === "normal" || (this.state === "attack" && this.atk && this.atk.phase === "recovery");
+      // hold attack to charge; release once the nib glows for the weapon's charged strike
+      if (this.control && !G.inputLocked) {
+        if (atkH && (this.state === "normal" || this.state === "attack") && !this.exhausted) {
+          const before = this.chargeT || 0; this.chargeT = before + dt;
+          if (before < D.charge.time && this.chargeT >= D.charge.time) { LD.Audio.sfx.charged(); I.rumble(0.15, 60); }
+          if (this.chargeT > 0.15 && Math.random() < (this.chargeT >= D.charge.time ? 0.9 : 0.35)) {
+            const hx = this.cx() + this.facing * 12, hy = this.y + 26, ready = this.chargeT >= D.charge.time;
+            const a = Math.random() * Math.PI * 2, r = 22 + Math.random() * 12;
+            P.add({ kind: "mote", x: hx + Math.cos(a) * r, y: hy + Math.sin(a) * r, vx: -Math.cos(a) * r * 3, vy: -Math.sin(a) * r * 3, g: 0, life: 0.3, size: ready ? 3 : 2, color: ready ? (S.weapon.element === "water" ? "rgba(120,180,245,0.9)" : "rgba(255,225,170,0.9)") : "rgba(21,16,13,0.7)" });
+          }
+        } else if (!atkH) {
+          if ((this.chargeT || 0) >= D.charge.time) this.chargedBuf = 0.35;
+          this.chargeT = 0;
+        }
+        if (swapP && (canAct || this.state === "guard") && this.swapCD <= 0) this.swapWeapon(G);
+        if (artP && canAct) {
+          this.atk = null; this.atkBuf = 0;
+          if (ay > 0 && this.onGround) this.startMend(G); else this.startArt(G);
+        }
+      }
+      if (this.chargedBuf > 0 && (this.state === "normal" || (this.state === "attack" && this.atk && this.atk.phase === "recovery"))) {
+        this.chargedBuf = 0; this.atk = null; this.atkBuf = 0; this.startCharged(G);
+      }
+      // low health: the page's pulse is audible
+      if (S.hp > 0 && S.hp <= D.player.hpPerPip && !G.cut) {
+        this._hbT = (this._hbT || 0) - dt;
+        if (this._hbT <= 0) { this._hbT = 1.15; LD.Audio.sfx.heartbeat(); if (LD.Cinema) LD.Cinema.pulse = Math.max(LD.Cinema.pulse, 0.45); }
+      }
 
       // --- physics
-      if (gravity) this.vy = Math.min(PD.maxFall, this.vy + PD.gravity * dt * (this.vy > 0 ? 1.12 : 1));
-      const wasGround = this.onGround, fallV = this.vy;
+      let fastFall = false;
+      if (gravity) {
+        let gm = this.vy > 0 ? 1.12 : 1;
+        // hang a moment at the top of a held jump: easier to aim landings
+        if (this.jumping && jumpH && Math.abs(this.vy) < PD.apexBand) gm *= PD.apexHang;
+        fastFall = !this.onGround && ay > 0 && this.vy > 0 && this.state === "normal";
+        if (fastFall) gm *= PD.fastFall;
+        this.vy = Math.min(PD.maxFall * (fastFall ? 1.2 : 1), this.vy + PD.gravity * dt * gm);
+      }
+      const wasGround = this.onGround, fallV = this.vy, preX = this.x;
       W.moveBody(this, dt);
+      // corner correction: a jump that clips a ceiling edge by a few pixels slides past it
+      if (this.hitCeil && fallV < -150) {
+        for (const off of [2, -2, 4, -4, 6, -6, 8, -8, PD.cornerNudge, -PD.cornerNudge]) {
+          if (W.rectFree({ x: this.x + off, y: this.y - 6, w: this.w, h: this.h }, this)) { this.x += off; this.vy = fallV * 0.95; this.hitCeil = false; break; }
+        }
+      }
+      // ledge assist: pushing into a wall whose top is just above the feet pops you up onto it
+      if (this.hitWall && !this.onGround && ax === this.hitWall && fallV > -260 && (this.state === "normal" || this.state === "attack")) {
+        for (let up = 2; up <= PD.ledgeAssist; up += 2) {
+          if (W.rectFree({ x: preX + this.hitWall * 4, y: this.y - up, w: this.w, h: this.h }, this)) {
+            this.y -= up; this.x = preX + this.hitWall * 4; this.vy = Math.min(this.vy, -40); this.vx = this.hitWall * 160;
+            break;
+          }
+        }
+      }
       if (this.onGround && !wasGround && fallV > 250) {
         this.landT = 0.13; LD.Audio.sfx.land();
         P.burst(this.cx(), this.feet(), 6, "dust", { angle: -Math.PI / 2, spread: 1.4, min: 40, max: 140, p: { g: 200, color: "rgba(70,55,45,0.5)", size: 3, life: 0.4 } });
@@ -227,9 +294,16 @@
         if (!near && edgeL && edgeR && !(G.boss && G.boss.collapseAt && G.boss.collapseAt(fx))) { this.lastSafe = { x: this.x, y: this.y }; this.safeT = 0.2; }
       }
 
-      this.visFacing = U.approach(this.visFacing, this.facing, dt * 14);
+      if (!(this.state === "art" && this.art && this.art.d.kind === "whirl")) this.visFacing = U.approach(this.visFacing, this.facing, dt * 14);
       this.updateCloth(dt);
       this.findInteract(G);
+    }
+
+    // Called on frames the world is frozen (hit-stop): remember presses so none are dropped.
+    catchInput() {
+      if (!this.control) return;
+      const pend = this.pending || (this.pending = new Set());
+      for (const a of ["jump", "attack", "dodge", "dash", "art", "swap"]) if (I.pressed(a)) pend.add(a);
     }
 
     move(ax, mult, dt) {
@@ -254,6 +328,7 @@
       if (this.exhausted || this.stamina <= 0) { LD.Audio.sfx.uiNo(); return; }
       this.useStamina(PD.dodge.cost);
       this.dodgeDir = ax !== 0 ? Math.sign(ax) : this.facing;
+      this.closeCall = false;
       this.setState("dodge");
       LD.Audio.sfx.dodge();
     }
@@ -286,6 +361,9 @@
       const isFinisher = dir === "fwd" && idx === wd.combo && wd.combo > 1;
       this.atk = { wd, dir, idx, sw, phase: "windup", t: 0, hit: new Set(), finisher: isFinisher, swung: false,
         windup: wd.windup * (isFinisher ? 1.25 : 1), active: wd.active, recovery: wd.recovery * (isFinisher ? 1.3 : 1) };
+      this.atk.riposte = this.takeRiposte();
+      this.atk.recovery *= LD.Loadout.mods.recoveryMult || 1;
+      if (this.swapStrikeT > 0) { this.atk.swapStrike = true; this.swapStrikeT = 0; }
       this.useStamina(wd.stamina);
       this.setState("attack");
     }
@@ -327,6 +405,12 @@
         LD.Audio.sfx.swing(G.S.weapon.cls === "heavy");
         if (a.dir === "fwd" && this.onGround) this.vx += this.facing * wd.lunge * (a.finisher ? 1.3 : 1);
         this.trail = { a1: a.sw.a1, a2: a.sw.a1, life: 0.22, max: 0.22, len: wd.length, el: G.S.weapon.element, dir: a.dir };
+        // Splash Nib: finishers send an ink wave along the floor
+        if (LD.Loadout.mods.splash && a.dir === "fwd" && this.onGround && (a.finisher || wd.combo === 1)) {
+          const col = G.S.weapon.element === "water" ? Art.WATER : Art.INK;
+          W.effects.push(new LD.Combat.InkShot(this.cx() + this.facing * 40, this.feet(), this.facing * 460, 0, this.moveAtk(G, { dmg: 9, stagger: 6, knock: 140 }, { noFlow: true, heavy: false, hitstop: 0.02 }), { floor: true, life: 0.5, w: 34, h: 34, color: col }));
+        }
+        if (a.swapStrike) P.add({ kind: "text", x: this.cx(), y: this.y - 16, vy: -50, g: 0, text: "✶ switch strike", size: 20, life: 0.8, color: "#1c2f55", front: true });
         if (G.S.weapon.cls === "heavy" && this.onGround) { LD.Camera.shake(0.12); }
       }
       if (a.phase === "active") {
@@ -351,11 +435,12 @@
     resolveHits(G, a) {
       const S = G.S, box = this.atkBox(), wd = a.wd;
       const atk = {
-        dmg: wd.dmg * (a.finisher ? 1.3 : 1), stagger: wd.stagger * (a.finisher ? 1.4 : 1), knock: wd.knock,
+        dmg: wd.dmg * (a.finisher ? 1.3 : 1) * (a.swapStrike ? 1.35 : 1) * this.dmgMult(G), stagger: wd.stagger * (a.finisher ? 1.4 : 1), knock: wd.knock,
         dir: a.dir === "fwd" ? this.facing : 0, heavy: S.weapon.cls === "heavy", hitstop: wd.hitstop,
-        breaksGuard: !!wd.breaksGuard, element: S.weapon.element, fromY: this.cy(),
+        breaksGuard: !!wd.breaksGuard, element: S.weapon.element, fromY: this.cy(), riposte: a.riposte,
       };
       let bounced = false;
+      if (atk.element === "water") LD.Combat.douse(G, box);
       for (const e of W.enemies) {
         if (a.hit.has(e) || e.dead || !e.hitbox) continue;
         const hb = e.hitbox();
@@ -395,10 +480,12 @@
     hurt(G, dmg, srcX, o = {}) {
       if (this.state === "dead" || this.state === "hazard") return false;
       if (G.cut) return false; // never punish the player while a cutscene holds the controls
+      if (this.state === "dodge" && this.iframes() && !o.ignoreIframes && !this.closeCall && this.invuln <= 0) { this.closeCall = true; this.onCloseCall(G); return false; }
       if (this.iframes() && !o.ignoreIframes) return false;
       const dir = Math.sign(this.cx() - srcX) || -this.facing;
       // guard: only against attacks from the front
       if (this.state === "guard" && Math.sign(srcX - this.cx()) === this.facing && !o.unblockable) {
+        if (this.stateT <= PD.guard.parry) { this.onParry(G, srcX, dir); return "blocked"; }
         const cost = dmg * PD.guard.cost;
         if (this.stamina >= cost) {
           this.useStamina(cost);
@@ -426,11 +513,258 @@
       this.vx = dir * 330; this.vy = -360; this.jumping = false;
       this.invuln = PD.hurtInvuln;
       LD.Audio.sfx.playerHurt();
+      if (LD.Cinema) LD.Cinema.hurt();
+      I.rumble(0.7, 220);
+      if (LD.Telemetry) LD.Telemetry.hurt(G, dmg, srcX, o);
       P.inkHit(this.cx(), this.cy(), dir, Art.INK, true);
       G.hitstop = Math.max(G.hitstop, 0.09);
       LD.Camera.shake(0.35);
       this.flash = 0.25;
       return true;
+    }
+
+    // ---------------------------------------------------------------- Flow, charged strikes, Ink Arts, Mend
+    gainFlow(G, n) {
+      const F = D.flow, S = G.S, before = S.flow || 0;
+      S.flow = Math.min(F.max, before + n);
+      if (Math.floor(S.flow / F.pip) > Math.floor(before / F.pip)) {
+        LD.Audio.sfx.flowPip(); LD.HUD.flowPulse();
+        if (!S.flags.hintFlow) { S.flags.hintFlow = true; LD.HUD.thought("Wet ink gathers on your nib.  [" + I.label("art") + "] Ink Art   ·   [" + I.label("down") + "] + hold [" + I.label("art") + "] Mend"); }
+      }
+    }
+    spendFlow(G, n) {
+      if ((G.S.flow || 0) < n) { LD.Audio.sfx.uiNo(); this.say(G, "Not enough wet ink on the nib — fight well to gather Flow."); return false; }
+      G.S.flow -= n; LD.HUD.flowPulse();
+      return true;
+    }
+    takeRiposte() { const r = this.riposteT > 0; this.riposteT = 0; return r; }
+    // a visual-only swing so the arm, weapon and trail animate during special moves
+    visAtk(sw, windup, active, recovery) { this.atk = { sw, dir: "fwd", idx: 1, phase: "windup", t: 0, windup, active, recovery, hit: new Set(), visual: true }; }
+    // Last Line: on your final drop of health, you hit harder
+    dmgMult(G) { return LD.Loadout.mods.lastLine && G.S.hp <= D.player.hpPerPip ? 1.4 : 1; }
+    swapWeapon(G) {
+      const S = G.S;
+      if (!S.spare) { if (!this._swapHint) { this._swapHint = true; this.say(G, "Nothing in reserve yet — draw a second weapon at the Bindery desk."); } return; }
+      const fromSwing = this.state === "attack";
+      const w = S.weapon; S.weapon = S.spare; S.spare = w;
+      this.atk = null; this.cs = null; this.chargeT = 0;
+      if (this.state === "attack" || this.state === "guard") this.setState("normal");
+      this.swapCD = 0.25;
+      this.swapStrikeT = fromSwing ? 0.8 : 0;
+      LD.Audio.sfx.fold(); LD.Audio.sfx.scribble();
+      const col = S.weapon.element === "water" ? Art.WATER : Art.INK;
+      P.burst(this.cx() + this.facing * 14, this.y + 26, 14, "ink", { min: 40, max: 160, p: { color: col, g: 300, size: 2.5 } });
+      P.add({ kind: "text", x: this.cx(), y: this.y - 14, vy: -40, g: 0, text: D.weapons[S.weapon.cls].name, size: 18, life: 0.7, color: "#2a1a10", front: true });
+      LD.HUD.weaponSwap();
+      if (LD.Telemetry) LD.Telemetry.count("swap");
+    }
+    moveAtk(G, d, o = {}) {
+      return Object.assign({ dmg: d.dmg * this.dmgMult(G), stagger: d.stagger, knock: d.knock || 200, dir: this.facing, heavy: G.S.weapon.cls === "heavy", hitstop: 0.06, breaksGuard: true, element: G.S.weapon.element, fromY: this.cy() }, o);
+    }
+    trailFor(G, a1, a2, life = 0.2) { this.trail = { a1, a2, life, max: life, len: this.weaponData(G.S).length, el: G.S.weapon.element, dir: "fwd" }; }
+
+    startCharged(G) {
+      const wd = this.weaponData(G.S), c = wd.charged;
+      if (!c) return;
+      if (this.exhausted) { LD.Audio.sfx.uiNo(); return; }
+      this.useStamina(wd.stamina * 1.5);
+      this.cs = { d: c, phase: "windup", t: 0, hit: new Set(), riposte: this.takeRiposte() };
+      this.setState("charged");
+      const cls = G.S.weapon.cls;
+      const sw = cls === "heavy" ? { a0: -2.9, a1: -2.6, a2: 1.4, a3: 1.5 } : cls === "blade" ? { a0: -1.9, a1: -1.6, a2: 0.9, a3: 1.1 } : { a0: -0.1, a1: -0.08, a2: 0.02, a3: 0.2, e0: -26, e2: 38 };
+      this.visAtk(sw, 0.12, c.dur, 0.28);
+      if (LD.Telemetry) LD.Telemetry.count("charged");
+    }
+    updateCharged(G, dt) {
+      const c = this.cs;
+      if (!c) { this.setState("normal"); return; }
+      const d = c.d, cls = G.S.weapon.cls;
+      c.t += dt; this.atk.t = c.t; this.atk.phase = c.phase;
+      if (c.phase === "windup") {
+        this.vx = U.approach(this.vx, 0, 3000 * dt);
+        if (c.t >= 0.12) {
+          c.phase = "active"; c.t = 0; this.atk.phase = "active"; this.atk.t = 0;
+          LD.Audio.sfx.swing(true); LD.Audio.sfx.fold();
+          this.trailFor(G, this.atk.sw.a1, this.atk.sw.a1, 0.28);
+          LD.Camera.shake(cls === "heavy" ? 0.35 : 0.15);
+          if (LD.Cinema) LD.Cinema.punch(0.03);
+          P.add({ kind: "text", x: this.cx(), y: this.y - 18, vy: -50, g: 0, text: d.name, size: 20, life: 0.8, color: "#2a1a10", front: true });
+          if (d.waves) {
+            const col = G.S.weapon.element === "water" ? Art.WATER : Art.INK;
+            for (const s of [-1, 1]) W.effects.push(new LD.Combat.InkShot(this.cx() + s * 60, this.feet(), s * d.waves.speed, 0, this.moveAtk(G, { dmg: d.waves.dmg, stagger: 12, knock: 220 }, { noFlow: true, heavy: false, hitstop: 0.03 }), { floor: true, life: d.waves.life, w: 40, h: 44, color: col }));
+            P.burst(this.cx() + this.facing * 60, this.feet(), 24, "scrap", { angle: -Math.PI / 2, spread: 1.5, min: 100, max: 360, p: { color: "#d8c9aa", g: 800, size: 6 } });
+          }
+        }
+        return;
+      }
+      if (c.phase === "active") {
+        this.vx = this.facing * d.dash / d.dur;
+        if (!this.onGround) this.vy = Math.min(this.vy, 0);
+        if (this.trail) { this.trail.a2 = this.atkAngle(); this.trail.life = this.trail.max; }
+        const cx = this.cx();
+        const box = { x: this.facing > 0 ? cx - 20 : cx - d.reach + 20, y: this.y + 28 - d.height / 2, w: d.reach, h: d.height };
+        LD.Combat.strikeBox(G, box, this.moveAtk(G, d, { charged: true, riposte: c.riposte, hitstop: 0.08 }), c.hit, { bat: true, walls: true });
+        if (d.iframes && Math.random() < 0.8) P.add({ kind: "crease", x: cx - this.facing * 10, y: this.feet(), vx: 0, vy: 0, g: 0, life: 0.3, sx: this.facing * 0.7 });
+        if (c.t >= d.dur) { c.phase = "recovery"; c.t = 0; this.vx *= 0.3; }
+        return;
+      }
+      this.vx = U.approach(this.vx, 0, PD.friction * dt);
+      if (c.t >= 0.28) { this.cs = null; this.atk = null; this.setState("normal"); }
+    }
+
+    startArt(G) {
+      const wd = this.weaponData(G.S), a = wd.art;
+      if (!a) return;
+      if (!this.spendFlow(G, D.flow.pip)) return;
+      this.art = { d: a, t: 0, n: 0, hit: new Set(), riposte: this.takeRiposte(), iframes: a.kind === "whirl" || a.kind === "rift", landed: false };
+      this.setState("art");
+      LD.Audio.sfx.art();
+      I.rumble(0.35, 120);
+      if (LD.Cinema) LD.Cinema.flash("236,225,201", 0.18, 5);
+      const col = G.S.weapon.element === "water" ? Art.WATER : Art.INK;
+      P.burst(this.cx(), this.cy(), 18, "ink", { min: 60, max: 240, p: { color: col, g: 300, size: 3 } });
+      P.add({ kind: "text", x: this.cx(), y: this.y - 20, vy: -50, g: 0, text: "✶ " + a.name, size: 22, life: 0.9, color: "#1c2f55", front: true });
+      if (a.kind === "flurry") this.visAtk({ a0: -1.2, a1: -1.1, a2: 1.0, a3: 0.9 }, 0.01, a.dur / a.hits, 0.2);
+      if (a.kind === "whirl") this.visAtk({ a0: -2.8, a1: -2.8, a2: 3.6, a3: 3.8 }, 0.04, a.dur, 0.18);
+      if (a.kind === "rift") { this.visAtk({ a0: -2.9, a1: -2.6, a2: 1.4, a3: 1.5 }, 0.3, 0.2, 0.3); this.vy = -780; this.onGround = false; this.jumping = false; }
+      if (a.kind === "blot") {
+        this.visAtk({ a0: -2.0, a1: -1.8, a2: 0.6, a3: 0.8 }, 0.02, 0.1, 0.25);
+        W.effects.push(new LD.Combat.InkShot(this.cx() + this.facing * 20, this.y + 24, this.facing * a.speed, -120, this.moveAtk(G, a, { noFlow: true, riposte: this.art.riposte }), { g: 420, life: 1.3, w: 24, h: 24, color: col }));
+      }
+      if (LD.Telemetry) LD.Telemetry.count("art");
+    }
+    updateArt(G, dt) {
+      const s = this.art;
+      if (!s) { this.setState("normal"); return; }
+      const a = s.d;
+      s.t += dt;
+      const end = () => { this.art = null; this.atk = null; this.visFacing = this.facing; this.setState("normal"); };
+      const atk = () => this.moveAtk(G, a, { noFlow: true, riposte: s.riposte, hitstop: 0.04, knock: a.kind === "flurry" ? 60 : 260 });
+      if (a.kind === "flurry") {
+        this.vx = U.approach(this.vx, this.facing * 70, 900 * dt);
+        this.atk.t += dt;
+        const k = Math.floor(s.t / (a.dur / a.hits)) + 1;
+        if (k > s.n && k <= a.hits) {
+          s.n = k; s.hit = new Set();
+          const cx = this.cx();
+          LD.Combat.strikeBox(G, { x: this.facing > 0 ? cx - 10 : cx - a.reach + 10, y: this.y + 28 - a.height / 2, w: a.reach, h: a.height }, atk(), s.hit, { bat: true });
+          LD.Audio.sfx.swing(false);
+          const sw = k % 2 ? { a0: -1.2, a1: -1.1, a2: 1.0, a3: 0.9 } : { a0: 1.0, a1: 0.9, a2: -1.2, a3: -1.0 };
+          this.atk.sw = sw; this.atk.phase = "active"; this.atk.t = 0;
+          this.trailFor(G, sw.a1, sw.a2, 0.12);
+        }
+        if (this.atk.t > this.atk.active) this.atk.phase = "recovery";
+        if (s.t >= a.dur + 0.2) end();
+        return;
+      }
+      if (a.kind === "whirl") {
+        this.vx = U.approach(this.vx, 0, 1400 * dt);
+        this.atk.phase = s.t < 0.04 ? "windup" : "active"; this.atk.t = Math.max(0, s.t - 0.04);
+        this.visFacing = Math.cos((s.t / a.dur) * Math.PI * 2) * this.facing;
+        const k = s.t < 0.08 ? 0 : s.t < 0.28 ? 1 : 2;
+        if (k > s.n) {
+          s.n = k; s.hit = new Set();
+          const cx = this.cx();
+          LD.Combat.strikeBox(G, { x: cx - a.reach, y: this.y + 28 - a.height / 2, w: a.reach * 2, h: a.height }, atk(), s.hit, { bat: true });
+          LD.Audio.sfx.swing(true);
+          if (LD.Cinema) LD.Cinema.ring(cx, this.cy(), G.S.weapon.element === "water" ? "63,127,192" : "21,16,13", 0.35);
+        }
+        if (s.t >= a.dur) end();
+        return;
+      }
+      if (a.kind === "rift") {
+        if (!s.landed) {
+          this.atk.phase = "windup"; this.atk.t = Math.min(s.t, 0.3);
+          if (s.t > 0.3 && this.vy > -100) this.vy = Math.max(this.vy, 900);   // crash down
+          this.vx = U.approach(this.vx, 0, 600 * dt);
+          if ((s.t > 0.12 && this.onGround) || s.t > 2) {
+            s.landed = true; s.t2 = 0; this.atk.phase = "active"; this.atk.t = 0;
+            const cx = this.cx(), fy = this.feet();
+            LD.Combat.strikeBox(G, { x: cx - a.radius, y: fy - 120, w: a.radius * 2, h: 136 }, this.moveAtk(G, a, { noFlow: true, riposte: s.riposte, knock: 460, hitstop: 0.12 }), s.hit, { bat: true, walls: true });
+            const col = G.S.weapon.element === "water" ? Art.WATER : Art.INK;
+            for (const d of [-1, 1]) W.effects.push(new LD.Combat.InkShot(cx + d * 70, fy, d * 480, 0, this.moveAtk(G, { dmg: 14, stagger: 12, knock: 200 }, { noFlow: true, heavy: false, hitstop: 0.03 }), { floor: true, life: 0.55, w: 40, h: 40, color: col }));
+            LD.Audio.sfx.stomp(); LD.Audio.sfx.breakWall();
+            LD.Camera.shake(0.6); G.hitstop = Math.max(G.hitstop, 0.1);
+            if (LD.Cinema) { LD.Cinema.punch(0.08); LD.Cinema.ring(cx, fy, "21,16,13", 0.8); LD.Cinema.speedLines(cx, fy - 30, 0.6); }
+            P.burst(cx, fy, 34, "scrap", { angle: -Math.PI / 2, spread: 1.6, min: 120, max: 460, p: { color: "#d8c9aa", g: 900, size: 7 } });
+            I.rumble(0.8, 200);
+          }
+        } else {
+          s.t2 += dt; this.atk.t = s.t2;
+          if (s.t2 > this.atk.active) this.atk.phase = "recovery";
+          this.vx = U.approach(this.vx, 0, PD.friction * dt);
+          if (s.t2 > 0.5) end();
+        }
+        return;
+      }
+      if (s.t > 0.3) end();
+    }
+
+    startMend(G) {
+      const M = D.flow.mend;
+      if (G.S.hp >= D.player.maxHp) { this.say(G, "Your line is whole — nothing to mend."); return; }
+      if ((G.S.flow || 0) < M.cost) { this.spendFlow(G, M.cost); return; }
+      this.mendT = 0; this.setState("mend");
+      LD.Audio.sfx.mendStart();
+    }
+    updateMend(G, dt, held) {
+      const M = D.flow.mend, S = G.S;
+      this.vx = U.approach(this.vx, 0, 2400 * dt);
+      this.mendT += dt;
+      // loose ink is drawn back into the torn line
+      if (Math.random() < 0.9) {
+        const a = Math.random() * Math.PI * 2, r = 50 + Math.random() * 40;
+        P.add({ kind: "mote", x: this.cx() + Math.cos(a) * r, y: this.cy() + Math.sin(a) * r, vx: -Math.cos(a) * r * 2.2, vy: -Math.sin(a) * r * 2.2, g: 0, life: 0.45, size: 2.5, color: "rgba(156,42,34,0.8)" });
+      }
+      if (!held) { this.setState("normal"); return; }   // let go early: nothing is spent
+      if (this.mendT >= M.channel) {
+        if (!this.spendFlow(G, M.cost)) { this.setState("normal"); return; }
+        S.hp = Math.min(D.player.maxHp, S.hp + M.heal);
+        LD.HUD.hpPulse(); LD.Audio.sfx.save();
+        P.burst(this.cx(), this.cy(), 20, "spark", { min: 40, max: 180, p: { color: "rgba(255,190,170,0.9)", g: -60, size: 3 } });
+        if (LD.Cinema) LD.Cinema.flash("255,235,225", 0.15, 4);
+        if (LD.Telemetry) LD.Telemetry.count("mend");
+        // keep holding to mend again while there is ink for it
+        if (S.hp < D.player.maxHp && (S.flow || 0) >= M.cost) this.mendT = 0; else this.setState("normal");
+      }
+    }
+
+    // dodged through an attack at the last instant
+    onCloseCall(G) {
+      const cc = PD.closeCall;
+      G.slowMo(cc.slow, cc.dur);
+      this.stamina = Math.min(PD.stamina.max, this.stamina + cc.stamina); this.exhausted = false;
+      LD.Audio.sfx.fold(); LD.Audio.sfx.strong();
+      if (LD.Cinema) { LD.Cinema.flash("236,225,201", 0.25, 5); LD.Cinema.ring(this.cx(), this.cy(), "236,225,201", 0.4); }
+      for (let i = 0; i < 10; i++) P.add({ kind: "crease", x: this.cx() - this.dodgeDir * i * 8, y: this.feet(), vx: 0, vy: 0, g: 0, life: 0.35, sx: this.facing * 0.7 });
+      P.add({ kind: "text", x: this.cx(), y: this.y - 16, vy: -60, g: 0, text: "✶ close call", size: 22, life: 0.9, color: "#1c2f55", front: true });
+      I.rumble(0.3, 90);
+      if (LD.Telemetry) LD.Telemetry.count("closeCall");
+      this.gainFlow(G, D.flow.gain.closeCall);
+    }
+
+    // guard raised just before the blow lands: no damage, no stamina, attacker reels
+    onParry(G, srcX, dir) {
+      this.invuln = Math.max(this.invuln, 0.3);
+      this.stamina = Math.min(PD.stamina.max, this.stamina + 10);
+      this.vx = dir * 120;
+      LD.Audio.sfx.block(); LD.Audio.sfx.strong();
+      G.hitstop = Math.max(G.hitstop, 0.14);
+      const hx = this.cx() + this.facing * 18;
+      P.burst(hx, this.cy(), 16, "spark", { angle: this.facing > 0 ? 0 : Math.PI, spread: 1.4, min: 120, max: 380, p: { color: "rgba(255,230,180,0.95)", g: 200, size: 3 } });
+      P.add({ kind: "text", x: this.cx(), y: this.y - 16, vy: -60, g: 0, text: "✶ parry", size: 24, life: 0.9, color: "#7a1f16", front: true });
+      if (LD.Cinema) { LD.Cinema.flash("255,245,220", 0.35, 4); LD.Cinema.punch(0.05); LD.Cinema.ring(hx, this.cy(), "236,225,201", 0.35); }
+      I.rumble(0.5, 120);
+      let best = null, bd = 320;
+      for (const e of W.enemies) { if (e.dead) continue; const d = Math.abs(e.cx() - srcX) + Math.abs(e.cy() - this.cy()) * 0.5; if (d < bd) { bd = d; best = e; } }
+      if (best) {
+        const need = best.isBoss ? PD.guard.parryPoise : 999;
+        best.poise -= need;
+        if (best.poise <= 0) { best.poise = best.data.poise; best.atk = null; best.setState("stagger"); best.vx = -dir * 180 / (best.data.weight || 1); if (best.onStagger) best.onStagger(G); }
+      }
+      if (LD.Telemetry) LD.Telemetry.count("parry");
+      this.gainFlow(G, D.flow.gain.parry);
+      this.riposteT = D.crit.riposteWindow;
     }
 
     applyDamage(G, dmg, chip) {
@@ -441,6 +775,7 @@
     }
 
     hitHazard(G, kind) {
+      if (LD.Telemetry) LD.Telemetry.hazard(G, kind);
       G.S.hp = Math.max(0, G.S.hp - (G.settings.damageAssist ? 10 : 20));
       LD.HUD.hpPulse();
       LD.Audio.sfx.playerHurt();
@@ -545,8 +880,10 @@
         p.fU = 0.2 + br * 0.03; p.fF = 0.45; p.bU = -0.08; p.bF = 0.15;
         if (this.lookDir) p.head = this.lookDir * 0.35;
       }
+      if (!this.onGround && this.vy < -300 && s !== "attack" && s !== "fold") { const k = Math.min(1, -this.vy / PD.jumpVel); p.sy = 1 + 0.08 * k; p.sx = 1 - 0.06 * k; }
       if (this.landT > 0) { const k = this.landT / 0.13; p.hipDY += 6 * k; p.sy = 1 - 0.1 * k; p.sx = 1 + 0.08 * k; p.fT += 0.4 * k; p.bT -= 0.2 * k; p.fS -= 0.6 * k; p.bS -= 0.6 * k; }
-      if (s === "attack" && this.atk) {
+      if (s === "mend") Object.assign(p, { lean: 0.35, hipDY: 10, fT: 0.95, fS: -0.9, bT: -0.25, bS: -1.35, fU: 1.5, fF: 2.5, bU: 1.3, bF: 2.3, head: 0.4 });
+      if ((s === "attack" || s === "charged" || s === "art") && this.atk) {
         const a = this.atk, ang = this.atkAngle();
         const armA = Math.PI / 2 - ang;
         p.fU = armA; p.fF = armA;
@@ -767,7 +1104,7 @@
       const s = this.state;
       if (s === "dead") return { name: "death", t: this.stateT };
       if (s === "fold") return { name: "fold", t: this.stateT };
-      if (s === "attack" && this.atk) {
+      if ((s === "attack" || s === "charged" || s === "art") && this.atk) {
         const a = this.atk, tot = a.windup + a.active + a.recovery;
         const done = a.phase === "windup" ? a.t : a.phase === "active" ? a.windup + a.t : a.windup + a.active + a.t;
         const name = a.dir === "up" ? "attack_up" : a.dir === "down" ? "attack_down" : "attack_" + G.S.weapon.cls + "_" + a.idx;

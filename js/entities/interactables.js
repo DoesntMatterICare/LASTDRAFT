@@ -357,6 +357,8 @@
       case "latch": return new Latch(d);
       case "pigment": return new Pigment(d);
       case "trigger": return S.flags["trig_" + d.id] ? null : new Trigger(d);
+      case "margin": return S.collected["marg_" + d.id] || LD.Loadout.owned(S, d.id) ? null : new LD.Loadout.MarginPickup(d);
+      case "checkpoint": return new LD.Loadout.Checkpoint(d);
     }
     return null;
   };

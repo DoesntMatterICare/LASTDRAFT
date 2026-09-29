@@ -37,7 +37,7 @@
 
     takeHit(G, h) {
       this.hp -= h.dmg;
-      this.hurtT = 0.16;
+      this.hurtT = 0.16; this.hitDir = h.dir || 0;
       this.poise -= h.stagger;
       this.vx = h.dir * h.knock / (this.data.weight || 1);
       if (!this.flying) this.vy = Math.min(this.vy, -120);
@@ -78,6 +78,7 @@
     update(dt, G) {
       this.t += dt; this.stateT += dt;
       this.hurtT = Math.max(0, this.hurtT - dt);
+      this.invuln = Math.max(0, this.invuln - dt);
       this.cd = Math.max(0, this.cd - dt);
       if (this.dead) { this.deathT += dt; this.vx *= 0.9; if (!this.flying) this.physics(dt); return this.deathT < 0.6; }
       if (this.state === "stagger") {
@@ -85,6 +86,10 @@
         if (this.stateT > (this.data.staggerTime || 0.9)) this.setState("idle");
       } else this.ai(dt, G);
       this.physics(dt);
+      // audible wind-up cue when a telegraph begins near the player
+      const tele = this.telegraphing();
+      if (tele && !this._tele && G.player && Math.abs(G.player.cx() - this.cx()) < 900) LD.Audio.sfx.tele();
+      this._tele = tele;
       if (!this.flying && W.hazardIn({ x: this.x, y: this.y, w: this.w, h: this.h }) === "~") this.die(G);
       this.contact(G);
       if (this.cy() > W.h * T + 200) this.dead = true;
@@ -96,6 +101,13 @@
       const fade = this.dead && !this.isBoss ? Math.max(0, 1 - this.deathT / 0.6) : 1;
       ctx.globalAlpha = fade;
       if (Art.highContrast) { ctx.shadowColor = "rgba(255,248,230,0.95)"; ctx.shadowBlur = 6; }
+      if (this.hurtT > 0 && !this.dead) {
+        // recoil: knocked back along the blow, with a shiver
+        const k = this.hurtT / 0.16;
+        ctx.translate(this.cx() + (this.hitDir || 0) * 5 * k + (Math.random() - 0.5) * 4 * k, this.y + this.h);
+        ctx.scale(1 + 0.06 * k, 1 - 0.06 * k);
+        ctx.translate(-this.cx(), -(this.y + this.h));
+      }
       let painted = null;
       if (LD.Sprites.enabled(this.k)) {
         const a = this.dead ? { name: "death", t: this.deathT } : this.anim();
@@ -130,8 +142,50 @@
 
   // =============================================================== Torn Paper Crawler
   class Crawler extends Enemy {
-    constructor(x, y) { super("crawler", x, y, D.enemies.crawler); this.setState("patrol"); const d = this.data; this.spriteMap = { patrol: "idle" }; this.durs = { rear: d.rear, lunge: d.lungeTime }; }
-    telegraphing() { return this.state === "rear"; }
+    constructor(x, y, o = {}) {
+      super("crawler", x, y, D.enemies.crawler); this.setState("patrol"); const d = this.data; this.spriteMap = { patrol: "idle", burrow: "rear", erupt: "rear", pop: "lunge" }; this.durs = { rear: d.rear, lunge: d.lungeTime };
+      if (o.small) { this.small = true; this.hp = this.maxHp = d.smallHp; this.poise = 3; this.w = 30; this.h = 18; }
+    }
+    telegraphing() { return this.state === "rear" || this.state === "erupt"; }
+    underground() { return this.state === "tunnel" || (this.state === "burrow" && this.stateT > 0.2); }
+    hitbox() { return this.underground() ? null : super.hitbox(); }
+    contact(G) { if (this.underground() || this.state === "burrow" || this.state === "erupt") return; super.contact(G); }
+    die(G) {
+      super.die(G);
+      if (this.small) return;
+      // torn paper tears again: two small, quick halves scuttle out
+      const d = this.data;
+      for (let i = 0; i < d.splits; i++) {
+        const s = new Crawler(0, 0, { small: true });
+        s.x = this.cx() - s.w / 2 + (i ? 10 : -10); s.y = this.y + this.h - s.h; s.homeX = s.x;
+        s.vx = (i ? 1 : -1) * 200; s.vy = -320; s.facing = i ? 1 : -1; s.cd = 0.6; s.invuln = 0.25;
+        W.enemies.push(s);
+      }
+      if (!G.S.flags.hintSplit) { G.S.flags.hintSplit = true; LD.HUD.thought("It tore in two — the halves are small, but quick."); }
+    }
+    draw(ctx, G) {
+      if (this.underground() && !this.dead) {
+        // a paper ripple travelling along the floor: where it will come up
+        const x = this.cx(), y = this.y + this.h, k = this.state === "burrow" ? (this.stateT - 0.2) / 0.15 : 1;
+        ctx.save(); ctx.globalAlpha = Math.min(1, k);
+        ctx.fillStyle = "#cdbd9d"; ctx.strokeStyle = Art.INK; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x - 26, y); ctx.quadraticCurveTo(x - 10, y - 12 - Math.sin(this.t * 20) * 2, x, y - 13); ctx.quadraticCurveTo(x + 12, y - 12 + Math.sin(this.t * 20) * 2, x + 26, y); ctx.fill(); ctx.stroke();
+        ctx.lineWidth = 1; ctx.beginPath(); for (let i = -2; i <= 2; i++) { ctx.moveTo(x + i * 7, y - 2); ctx.lineTo(x + i * 7 + 3, y - 9 + Math.abs(i) * 2); } ctx.stroke();
+        ctx.restore();
+        return;
+      }
+      if (this.small) {
+        const fx = this.cx(), fy = this.y + this.h;
+        ctx.save(); ctx.translate(fx, fy); ctx.scale(0.62, 0.62); ctx.translate(-fx, -fy);
+        const sv = { w: this.w, h: this.h, x: this.x, y: this.y };
+        this.w = 46; this.h = 26; this.x = fx - 23; this.y = fy - 26;
+        super.draw(ctx, G);
+        Object.assign(this, sv);
+        ctx.restore();
+        return;
+      }
+      super.draw(ctx, G);
+    }
     ai(dt, G) {
       const d = this.data, { dx, dy } = this.toPlayer(G);
       const see = Math.abs(dx) < d.aggro && Math.abs(dy) < 70 && !G.player.dead;
@@ -141,7 +195,9 @@
           this.vx = U.approach(this.vx, this.facing * d.speed, 600 * dt);
           if (this.onGround && (this.ledgeAhead() || this.hitWall)) { this.facing *= -1; this.vx = 0; }
           if (see && this.cd <= 0 && (Math.sign(dx) === this.facing || Math.abs(dx) < 120)) {
-            this.facing = Math.sign(dx) || this.facing; this.setState("rear"); LD.Audio.sfx.chitter();
+            this.facing = Math.sign(dx) || this.facing;
+            if (!this.small && Math.abs(dx) > 130 && Math.random() < d.burrowChance) { this.setState("burrow"); LD.Audio.sfx.tear(); }
+            else { this.setState("rear"); LD.Audio.sfx.chitter(); }
           }
           if (Math.random() < dt * 0.3) LD.Audio.sfx.chitter();
           break;
@@ -151,12 +207,38 @@
           break;
         case "lunge":
           if (this.onGround && this.ledgeAhead()) this.vx = 0;
-          LD.Combat.enemyStrike(G, { x: this.x - 4, y: this.y - 4, w: this.w + 8, h: this.h + 4 }, d.dmg, this.cx());
+          LD.Combat.enemyStrike(G, { x: this.x - 4, y: this.y - 4, w: this.w + 8, h: this.h + 4 }, this.small ? 10 : d.dmg, this.cx(), { cause: this.small ? "crawler half · lunge" : "crawler · lunge" });
           if (this.stateT > d.lungeTime) this.setState("recover");
           break;
         case "recover":
           this.vx = U.approach(this.vx, 0, 900 * dt);
-          if (this.stateT > d.recover) { this.setState("patrol"); this.cd = 0.8; }
+          if (this.stateT > d.recover) { this.setState("patrol"); this.cd = this.small ? 0.4 : 0.8; }
+          break;
+        case "burrow":
+          this.vx = U.approach(this.vx, 0, 1500 * dt);
+          if (Math.random() < 0.6) P.add({ kind: "scrap", x: this.cx() + U.rand(-16, 16), y: this.y + this.h - 4, vx: U.rand(-80, 80), vy: -U.rand(80, 200), g: 700, color: "#cdbd9d", size: 3, life: 0.5 });
+          if (this.stateT > 0.35) this.setState("tunnel");
+          break;
+        case "tunnel":
+          // travels under the page towards you
+          this.facing = Math.sign(dx) || this.facing;
+          this.vx = this.facing * d.tunnelSpeed;
+          if (this.onGround && this.ledgeAhead()) this.vx = 0;
+          if (Math.random() < 0.5) P.add({ kind: "scrap", x: this.cx() + U.rand(-14, 14), y: this.y + this.h - 3, vx: -this.vx * 0.2, vy: -U.rand(40, 120), g: 600, color: "#cdbd9d", size: 2.5, life: 0.4 });
+          if (Math.random() < dt * 6) LD.Audio.sfx.scratch();
+          if (Math.abs(dx) < 18 || this.stateT > d.tunnelMax || this.hitWall) { this.setState("erupt"); this.vx = 0; LD.Audio.sfx.chitter(); }
+          break;
+        case "erupt":
+          this.vx = 0;
+          if (this.stateT > d.erupt) {
+            this.setState("pop"); this.vy = -560;
+            LD.Audio.sfx.breakWall(); LD.Camera.shake(0.15);
+            P.burst(this.cx(), this.y + this.h, 18, "scrap", { angle: -Math.PI / 2, spread: 1.2, min: 120, max: 360, p: { color: "#cdbd9d", g: 800, size: 5 } });
+          }
+          break;
+        case "pop":
+          LD.Combat.enemyStrike(G, { x: this.x - 10, y: this.y - 40, w: this.w + 20, h: this.h + 44 }, d.dmg, this.cx(), { cause: "crawler · erupt" });
+          if (this.onGround && this.stateT > 0.15) this.setState("recover");
           break;
       }
     }
@@ -200,9 +282,22 @@
   // =============================================================== Scribble Wretch
   class Wretch extends Enemy {
     constructor(x, y) { super("wretch", x, y, D.enemies.wretch); this.setState("wander"); this.hits = [false, false]; this.spriteMap = { wander: "idle" }; this.durs = { windup: this.data.windup, slash: this.data.slashTime }; }
-    telegraphing() { return this.state === "windup"; }
+    telegraphing() { return this.state === "windup" || this.state === "dashWind"; }
+    frenzied() { return this.hp < this.maxHp * this.data.frenzyAt; }
+    takeHit(G, h) {
+      const was = this.frenzied(), r = super.takeHit(G, h);
+      if (!was && this.frenzied() && !this.dead) {
+        LD.Audio.sfx.scribble(); LD.Audio.sfx.chitter();
+        P.add({ kind: "text", x: this.cx(), y: this.y - 20, vy: -40, g: 0, text: "frenzied!", size: 20, life: 0.9, color: "#7a1f16", front: true });
+      }
+      return r;
+    }
     ai(dt, G) {
-      const d = this.data, { dx, dy } = this.toPlayer(G);
+      const d0 = this.data, { dx, dy } = this.toPlayer(G);
+      // frenzy: every wind-up shortens and it moves faster
+      const fz = this.frenzied() ? d0.frenzyTempo : 1;
+      const d = fz < 1 ? Object.assign({}, d0, { windup: d0.windup * fz, comboWindup: d0.comboWindup * fz, dashWind: d0.dashWind * fz, recover: d0.recover * fz, speed: d0.speed * 1.35, comboChance: 0.7 }) : d0;
+      if (fz < 1 && Math.random() < dt * 10) P.add({ kind: "ink", x: this.cx() + U.rand(-14, 14), y: this.y + U.rand(0, this.h), vx: U.rand(-60, 60), vy: -U.rand(20, 80), g: 300, color: "#7a1f16", size: 2, life: 0.5 });
       const see = Math.abs(dx) < d.aggro && Math.abs(dy) < 90 && !G.player.dead;
       switch (this.state) {
         case "idle": case "wander":
@@ -213,6 +308,7 @@
             this.vx = U.approach(this.vx, this.facing * d.speed * jitter, 700 * dt);
             if (this.onGround && this.ledgeAhead()) this.vx = 0;
             if (Math.abs(dx) < d.reach + 6 && Math.abs(dy) < 50 && this.cd <= 0) { this.setState("windup"); LD.Audio.sfx.scribble(); }
+            else if (Math.abs(dx) > 150 && Math.abs(dx) < 320 && Math.abs(dy) < 50 && this.cd <= 0 && Math.random() < dt * 1.4) { this.setState("dashWind"); LD.Audio.sfx.scribble(); }
           } else {
             this.vx = U.approach(this.vx, this.facing * 30, 300 * dt);
             if (this.onGround && (this.ledgeAhead() || this.hitWall || Math.abs(this.x - this.homeX) > 120)) this.facing *= -1;
@@ -220,7 +316,7 @@
           break;
         case "windup":
           this.vx = U.approach(this.vx, 0, 1500 * dt);
-          if (this.stateT > d.windup) { this.setState("slash"); this.hits = [false, false]; this.vx = this.facing * 160; }
+          if (this.stateT > (this.combo ? d.comboWindup : d.windup)) { this.setState("slash"); this.hits = [false, false]; this.vx = this.facing * (this.combo ? 220 : 160); }
           break;
         case "slash": {
           const w = this.stateT < 0.13 ? 0 : this.stateT > 0.18 && this.stateT < 0.32 ? 1 : -1;
@@ -230,12 +326,32 @@
             if (LD.Combat.enemyStrike(G, box, d.dmg, this.cx())) this.hits[w] = true;
           }
           this.vx = U.approach(this.vx, 0, 600 * dt);
-          if (this.stateT > d.slashTime) this.setState("recover");
+          if (this.stateT > d.slashTime) {
+            // sometimes it presses the attack: a quicker second wind-up, turning to follow you
+            if (!this.combo && Math.random() < d.comboChance && Math.abs(dx) < d.reach + 60) { this.combo = true; this.facing = Math.sign(dx) || this.facing; this.setState("windup"); LD.Audio.sfx.scribble(); }
+            else this.setState("recover");
+          }
+          break;
+        }
+        case "dashWind":
+          this.facing = Math.sign(dx) || this.facing;
+          this.vx = U.approach(this.vx, -this.facing * 40, 900 * dt);
+          if (this.stateT > d.dashWind) { this.setState("dash"); this.dashHit = false; this.vx = this.facing * d.dashSpeed; LD.Audio.sfx.swing(); }
+          break;
+        case "dash": {
+          // a scribbled streak across the floor, claws out
+          const box = { x: this.facing > 0 ? this.cx() - 10 : this.cx() - d.reach + 10, y: this.y, w: d.reach, h: this.h };
+          if (!this.dashHit && LD.Combat.enemyStrike(G, box, d.dmg, this.cx(), { cause: "wretch · dash-slash" })) this.dashHit = true;
+          if (Math.random() < 0.8) P.add({ kind: "ink", x: this.cx() - this.facing * 10, y: this.y + U.rand(10, this.h - 6), vx: -this.vx * 0.1, vy: 0, g: 0, color: Art.INK, size: 2.5, life: 0.3 });
+          this.vx = U.approach(this.vx, 0, 600 * dt);
+          if (this.onGround && this.ledgeAhead()) this.vx = 0;
+          if (this.stateT > d.dashTime) { this.setState("recover"); this.stateT = d.recover * 0.3; }
           break;
         }
         case "recover":
           this.vx = U.approach(this.vx, 0, 900 * dt);
-          if (this.stateT > d.recover) { this.setState("wander"); this.cd = 0.5; }
+          if (this.combo && this.stateT < 0.05 && Math.random() < d.hopBack) { this.vx = -this.facing * 280; this.vy = -260; }
+          if (this.stateT > d.recover) { this.setState("wander"); this.cd = 0.5; this.combo = false; }
           break;
       }
     }
@@ -292,10 +408,33 @@
       this.spriteMap = { hover: "idle" }; this.durs = { tele: this.data.telegraph };
     }
     spriteY() { return this.cy(); }
-    telegraphing() { return this.state === "tele"; }
+    telegraphing() { return this.state === "tele" || this.state === "diveWind"; }
     ai(dt, G) {
       const d = this.data, { dx, p } = this.toPlayer(G);
       const dist = Math.hypot(dx, p.cy() - this.cy());
+      if (this.state === "diveWind") {
+        // wings flare, it hitches upward, then commits to a straight line at you
+        this.vx *= 0.9; this.vy = U.approach(this.vy, -60, 600 * dt);
+        this.facing = Math.sign(dx) || this.facing;
+        if (this.stateT > d.diveWind) {
+          const ang = Math.atan2(p.cy() - this.cy(), p.cx() - this.cx());
+          this.diveV = { x: Math.cos(ang) * d.diveSpeed, y: Math.sin(ang) * d.diveSpeed };
+          this.setState("dive"); this.diveHit = false; LD.Audio.sfx.swing(); LD.Audio.sfx.flutter();
+        }
+        return;
+      }
+      if (this.state === "dive") {
+        this.vx = this.diveV.x; this.vy = this.diveV.y;
+        if (!this.diveHit && LD.Combat.enemyStrike(G, { x: this.x, y: this.y, w: this.w, h: this.h }, d.dmg, this.cx(), { cause: "moth · dive" })) this.diveHit = true;
+        if (Math.random() < 0.8) P.add({ kind: "ink", x: this.cx(), y: this.cy(), vx: 0, vy: 0, g: 0, color: Art.INK, size: 2.5, life: 0.35 });
+        if (this.stateT > d.diveTime || this.hitWall || this.onGround) { this.setState("climb"); this.cd = d.shootEvery; }
+        return;
+      }
+      if (this.state === "climb") {
+        this.vx *= 0.94; this.vy = U.approach(this.vy, -170, 800 * dt);
+        if (this.stateT > 0.6) this.setState("hover");
+        return;
+      }
       switch (this.state) {
         case "idle": case "hover": {
           this.state = "hover";
@@ -304,7 +443,10 @@
             tx = p.cx() - Math.sign(dx || 1) * 150 - this.w / 2;
             ty = p.y - 110 + Math.sin(this.t * 2.3) * 22;
             this.facing = Math.sign(dx) || 1;
-            if (this.cd <= 0) { this.setState("tele"); LD.Audio.sfx.flutter(); }
+            if (this.cd <= 0) {
+              if (dist < d.diveRange && Math.random() < d.diveChance) { this.setState("diveWind"); LD.Audio.sfx.flutter(); }
+              else { this.setState("tele"); LD.Audio.sfx.flutter(); }
+            }
           }
           this.vx = U.approach(this.vx, U.clamp((tx - this.x) * 2, -d.speed, d.speed), 400 * dt);
           this.vy = U.approach(this.vy, U.clamp((ty - this.y) * 2, -d.speed, d.speed), 400 * dt);
@@ -353,12 +495,14 @@
   class Guard extends Enemy {
     constructor(x, y) { super("guard", x, y, D.enemies.guard); this.setState("patrol"); this.frame = 0; this.frameT = 0; this.hitDone = false; this.spriteMap = { patrol: "walk", stance: "idle" }; this.durs = { windup: this.data.windup, thrust: this.data.thrustTime }; }
     anim() { if (this.state === "stance" && Math.abs(this.vx) > 10) return { name: "walk", t: this.t }; return super.anim(); }
-    telegraphing() { return this.state === "windup"; }
-    shielding() { return this.state === "patrol" || this.state === "stance" || this.state === "idle"; }
+    telegraphing() { return this.state === "windup" || this.state === "bashWind" || this.state === "throwWind"; }
+    shielding() { return this.state === "patrol" || this.state === "stance" || this.state === "idle" || this.state === "bashWind"; }
     takeHit(G, h) {
       if (this.shielding() && !h.breaksGuard && Math.sign(G.player.cx() - this.cx()) === this.facing) {
         this.vx = -Math.sign(G.player.cx() - this.cx()) * 40;
         this.shieldFlash = 0.2;
+        this.blocks = (this.blocks || 0) + 1; this.blockT = 1.6;
+        if (this.blocks >= this.data.bashAfter && this.state !== "bashWind") { this.blocks = 0; this.setState("bashWind"); LD.Audio.sfx.creak(); }
         if (!G.S.flags.hintGuard) { G.S.flags.hintGuard = true; LD.HUD.thought("Its page-shield turns the blow. Strike after its thrust, from behind — or with something heavy."); }
         return "blocked";
       }
@@ -370,6 +514,8 @@
       const d = this.data, { dx, dy } = this.toPlayer(G);
       const see = Math.abs(dx) < d.aggro && Math.abs(dy) < 80 && !G.player.dead;
       this.shieldFlash = Math.max(0, (this.shieldFlash || 0) - dt);
+      this.blockT = Math.max(0, (this.blockT || 0) - dt); if (this.blockT <= 0) this.blocks = 0;
+      this.throwCd = Math.max(0, (this.throwCd || 0) - dt);
       switch (this.state) {
         case "idle": case "patrol":
           this.state = "patrol";
@@ -383,6 +529,16 @@
           else this.vx = U.approach(this.vx, 0, 600 * dt);
           if (!see && this.stateT > 1.5) this.setState("patrol");
           if (Math.abs(dx) < d.reach + 10 && this.cd <= 0 && Math.abs(dy) < 60) { this.setState("windup"); LD.Audio.sfx.creak(); }
+          else if (Math.abs(dx) > d.reach + 110 && Math.abs(dx) < 560 && Math.abs(dy) < 70 && this.cd <= 0 && (this.throwCd || 0) <= 0 && Math.random() < dt * 0.9) { this.setState("throwWind"); LD.Audio.sfx.creak(); }
+          break;
+        case "throwWind":
+          this.facing = Math.sign(dx) || this.facing;
+          this.vx = U.approach(this.vx, 0, 900 * dt);
+          if (this.stateT > d.throwWind) {
+            W.projectiles.push(new Projectile(this.cx() + this.facing * 30, this.y + 28, this.facing * d.throwSpeed, -70, { g: 140, dmg: d.dmg, kind: "spear", r: 8, cause: "guard · spear throw" }));
+            LD.Audio.sfx.swing(true);
+            this.throwCd = d.throwCd; this.cd = 1.1; this.setState("recover");
+          }
           break;
         case "windup":
           this.vx = U.approach(this.vx, 0, 900 * dt);
@@ -399,6 +555,28 @@
           this.vx = U.approach(this.vx, 0, 900 * dt);
           if (this.stateT > d.recover) { this.setState("stance"); this.cd = 1.0; }
           break;
+        case "bashWind":
+          // a shoulder dropped behind the page-shield: it's about to shove
+          this.facing = Math.sign(dx) || this.facing;
+          this.vx = U.approach(this.vx, -this.facing * 30, 600 * dt);
+          if (this.stateT > d.bashWind) { this.setState("bash"); this.hitDone = false; this.vx = this.facing * 420; LD.Audio.sfx.swing(true); }
+          break;
+        case "bash": {
+          const box = { x: this.facing > 0 ? this.cx() : this.cx() - 58, y: this.y + 6, w: 58, h: this.h - 10 };
+          if (!this.hitDone) {
+            const r = LD.Combat.enemyStrike(G, box, d.bashDmg, this.cx(), { cause: "guard · shield bash" });
+            if (r) {
+              this.hitDone = true;
+              const p = G.player;
+              p.vx = this.facing * 520; p.vy = -220;
+              p.useStamina(d.bashStamina);
+              LD.Camera.shake(0.3);
+            }
+          }
+          this.vx = U.approach(this.vx, 0, 1800 * dt);
+          if (this.stateT > d.bashTime) { this.setState("recover"); this.stateT = 0.3; }
+          break;
+        }
       }
     }
     drawBody(ctx, G) {
@@ -448,11 +626,51 @@
   // =============================================================== Cinder Leaflet
   class Leaflet extends Enemy {
     constructor(x, y) { super("leaflet", x, y, D.enemies.leaflet); this.setState("wait"); this.cd = Math.random(); this.spriteMap = { wait: "idle" }; this.durs = { crouch: this.data.crouch }; }
-    telegraphing() { return this.state === "crouch"; }
+    telegraphing() { return this.state === "crouch" || this.state === "flare"; }
+    takeHit(G, h) {
+      this.lastRel = h.rel;
+      const r = super.takeHit(G, h);
+      if (!this.dead && this.state !== "flare" && this.state !== "leap" && this.hp < this.maxHp * this.data.flareAt) { this.setState("flare"); LD.Audio.sfx.fireBurst(); }
+      return r;
+    }
+    die(G) {
+      super.die(G);
+      if (this.lastRel === "strong") {
+        // water drowns it: a hiss of steam, nothing left burning
+        P.burst(this.cx(), this.cy(), 14, "mote", { angle: -Math.PI / 2, spread: 1.2, min: 40, max: 160, p: { color: "rgba(235,240,245,0.8)", g: -60, size: 5, life: 0.9 } });
+        P.add({ kind: "text", x: this.cx(), y: this.y - 14, vy: -40, g: 0, text: "fizzled", size: 18, life: 0.8, color: "#1c3f73", front: true });
+        LD.Audio.sfx.splash();
+      } else {
+        W.effects.push(new FirePatch(this.cx(), this.y + this.h, 70, 1.4, 0.2, { cause: "leaflet · burning remains" }));
+      }
+    }
+    burst(G) {
+      const d = this.data, cx = this.cx(), cy = this.cy();
+      LD.Combat.enemyStrike(G, { x: cx - d.burstRadius, y: cy - d.burstRadius, w: d.burstRadius * 2, h: d.burstRadius * 2 }, d.burstDmg, cx, { cause: "leaflet · burst" });
+      P.burst(cx, cy, 30, "ember", { min: 100, max: 360, p: { g: 100, size: 3, life: 0.9 } });
+      LD.Audio.sfx.fireBurst(); LD.Camera.shake(0.25);
+      if (LD.Cinema) LD.Cinema.ring(cx, cy, "255,120,40", 0.45);
+      this.lastRel = null; this.hp = 0; this.die(G);
+    }
     ai(dt, G) {
       const d = this.data, { dx, dy } = this.toPlayer(G);
       const see = Math.abs(dx) < d.aggro && Math.abs(dy) < 120 && !G.player.dead;
+      if (this.state === "wait" && see && this.onGround && this.hp < this.maxHp * d.flareAt) { this.setState("flare"); LD.Audio.sfx.fireBurst(); }
       switch (this.state) {
+        case "flare":
+          // swelling, glowing: it's about to throw itself at you
+          this.vx = U.approach(this.vx, 0, 900 * dt);
+          this.facing = Math.sign(dx) || this.facing;
+          if (Math.random() < 0.8) P.add({ kind: "ember", x: this.cx() + U.rand(-14, 14), y: this.cy(), vx: U.rand(-60, 60), vy: -U.rand(60, 160), g: -30, size: 2.6, life: 0.6 });
+          if (this.stateT > d.flare && this.onGround) {
+            this.setState("leap");
+            const tAir = 0.55; this.vx = U.clamp(dx / tAir, -520, 520); this.vy = -1000 * tAir;
+          }
+          break;
+        case "leap":
+          if (Math.abs(dx) < 34 && Math.abs(G.player.cy() - this.cy()) < 46) { this.burst(G); break; }
+          if (this.onGround && this.stateT > 0.12) this.burst(G);
+          break;
         case "idle": case "wait":
           this.state = "wait";
           if (this.onGround) this.vx = U.approach(this.vx, 0, 800 * dt);
@@ -473,6 +691,19 @@
           break;
       }
       if (Math.random() < dt * 8) P.add({ kind: "ember", x: this.cx() + U.rand(-10, 10), y: this.y + 6, vx: U.rand(-20, 20), vy: -U.rand(30, 70), g: -20, size: 2, life: 0.8 });
+    }
+    draw(ctx, G) {
+      if ((this.state === "flare" || this.state === "leap") && !this.dead) {
+        const k = this.state === "flare" ? this.stateT / this.data.flare : 1, fx = this.cx(), fy = this.y + this.h;
+        ctx.save(); ctx.globalCompositeOperation = "lighter";
+        Art.glow(ctx, fx, this.cy(), 50 + k * 60, "rgba(255,120,40,0.7)", 0.6 + Math.sin(G.time * 30) * 0.3);
+        ctx.restore();
+        ctx.save(); const s = 1 + k * 0.35 + Math.sin(G.time * 30) * 0.05;
+        ctx.translate(fx, fy); ctx.scale(s, s); ctx.translate(-fx, -fy);
+        super.draw(ctx, G); ctx.restore();
+        return;
+      }
+      super.draw(ctx, G);
     }
     drawBody(ctx, G) {
       const x = this.cx(), y = this.y + this.h, f = this.facing;
@@ -498,7 +729,7 @@
     constructor(x, y, vx, vy, o = {}) {
       this.x = x; this.y = y; this.vx = vx; this.vy = vy;
       this.r = o.r || 7; this.dmg = o.dmg || 20; this.g = o.g || 0; this.kind = o.kind || "ink";
-      this.life = o.life || 4; this.hostile = true; this.dead = false; this.t = 0; this.onLand = o.onLand;
+      this.life = o.life || 4; this.hostile = true; this.dead = false; this.t = 0; this.onLand = o.onLand; this.cause = o.cause;
     }
     box() { return { x: this.x - this.r, y: this.y - this.r, w: this.r * 2, h: this.r * 2 }; }
     update(dt, G) {
@@ -510,11 +741,20 @@
         if (this.onLand) this.onLand(G, this);
         P.burst(this.x, this.y, 6, this.kind === "ember" ? "ember" : "ink", { min: 40, max: 160, p: { color: Art.INK } });
       }
-      if (!this.dead && LD.Combat.enemyStrike(G, this.box(), this.dmg, this.x - this.vx)) this.dead = true;
+      if (!this.dead && LD.Combat.enemyStrike(G, this.box(), this.dmg, this.x - this.vx, { cause: this.cause || "projectile" })) this.dead = true;
       if (Math.random() < 0.6) P.add({ kind: this.kind === "ember" ? "ember" : "ink", x: this.x, y: this.y, vx: 0, vy: 0, g: this.kind === "ember" ? -30 : 200, color: Art.INK, size: this.kind === "ember" ? 2 : 2.2, life: 0.4 });
       return !this.dead;
     }
     draw(ctx) {
+      if (this.kind === "spear") {
+        ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(Math.atan2(this.vy, this.vx));
+        ctx.fillStyle = Art.INK;
+        Art.brush(ctx, [-60, 0, -10, -1, 10, 0], 3.2, { seed: 3, taperStart: 0, taperEnd: 0 });
+        ctx.beginPath(); ctx.moveTo(10, -6); ctx.lineTo(30, 0); ctx.lineTo(10, 5); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "#ddd0b2"; ctx.fillRect(-62, -4, 6, 8);
+        ctx.restore();
+        return;
+      }
       if (this.kind === "ember") {
         ctx.save(); ctx.globalCompositeOperation = "lighter";
         Art.glow(ctx, this.x, this.y, 26, "rgba(255,140,50,0.8)");
@@ -534,13 +774,13 @@
   // A burning strip of page: warns (smoke + cracks), then burns.
   class FirePatch {
     constructor(x, y, w, dur, warn = 0.9, o = {}) {
-      this.x = x; this.y = y; this.w = w; this.dur = dur; this.warn = warn; this.t = 0; this.dmg = o.dmg || 20; this.h = o.h || 46;
+      this.x = x; this.y = y; this.w = w; this.dur = dur; this.warn = warn; this.t = 0; this.dmg = o.dmg || 20; this.h = o.h || 46; this.cause = o.cause || "fire patch";
     }
     active() { return this.t > this.warn && this.t < this.warn + this.dur; }
     update(dt, G) {
       this.t += dt;
       if (this.active()) {
-        LD.Combat.enemyStrike(G, { x: this.x - this.w / 2 + 4, y: this.y - this.h, w: this.w - 8, h: this.h }, this.dmg, this.x);
+        LD.Combat.enemyStrike(G, { x: this.x - this.w / 2 + 4, y: this.y - this.h, w: this.w - 8, h: this.h }, this.dmg, this.x, { cause: this.cause });
         if (Math.random() < 0.5) P.add({ kind: "ember", x: this.x + U.rand(-this.w / 2, this.w / 2), y: this.y - 10, vx: U.rand(-20, 20), vy: -U.rand(60, 160), g: -40, size: 2.2, life: 0.9 });
         if (Math.random() < dt * 4) LD.Audio.sfx.crackle();
       } else if (this.t < this.warn && Math.random() < 0.3) {

@@ -348,7 +348,7 @@
     ctx.translate(x, y); ctx.scale(f, 1);
     const gallop = st === "charge" ? t * 18 : 0;
     const crouch = st === "leapWind" ? this.stateT * 20 : st === "land" ? Math.max(0, 12 - this.stateT * 30) : 0;
-    const headLow = st === "chargeWind" || st === "charge" ? 1 : st === "sweepWind" ? -0.6 : 0;
+    const headLow = st === "chargeWind" || st === "charge" ? 1 : st === "sweepWind" || st === "sprayWind" ? -0.6 : st === "erase" ? 0.5 : 0;
     const flick = this.phase2() && Math.floor(t * 6) % 5 === 0;
     const breathe = Math.sin(t * 2) * 1.2;
     const by = -62 + crouch + breathe * 0.3;
@@ -469,7 +469,7 @@
     let ha = -1.3, ext = 0, lean = 0;
     if (st === "atk" && a) {
       const k = a.phase === "wind" ? U.easeOut(a.t / a.wind) : a.phase === "act" ? U.easeOut(a.t / Math.max(0.01, a.act)) : 1;
-      const K = { cleave: [-1.3, -2.5, 0.9], sweep: [-1.3, 2.7, 0.25], lob: [-1.3, -1.0, -1.1], lunge: [-1.3, -0.1, 0.0], floor: [-1.3, -1.6, 1.4], wave: [-1.3, -2.6, 1.2], collapse: [-1.3, -1.5, 1.5] }[a.name];
+      const K = { cleave: [-1.3, -2.5, 0.9], sweep: [-1.3, 2.7, 0.25], lob: [-1.3, -1.0, -1.1], lunge: [-1.3, -0.1, 0.0], floor: [-1.3, -1.6, 1.4], wave: [-1.3, -2.6, 1.2], collapse: [-1.3, -1.5, 1.5], stoke: [-1.3, 1.25, 1.35] }[a.name] || [-1.3, -1.3, -1.3];
       if (a.phase === "wind") { ha = U.lerp(K[0], K[1], k); lean = a.name === "cleave" || a.name === "wave" ? -0.15 * k : 0.1 * k; }
       else if (a.phase === "act") { ha = U.lerp(K[1], K[2], k); lean = 0.25; ext = a.name === "lunge" ? 20 : 0; }
       else { ha = K[2]; lean = 0.15 * (1 - a.t / a.rec); }

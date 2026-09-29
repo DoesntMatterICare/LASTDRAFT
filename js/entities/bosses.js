@@ -36,9 +36,7 @@
     startFight(G) {
       this.setState("wake");
       seal(this.sealTiles);
-      G.startBoss(this, "miniboss", { x0: 0, x1: W.w * T });
-      LD.Audio.sfx.hart();
-      LD.HUD.titleCard(this.name, this.title);
+      G.runHartIntro(this);
     }
 
     ai(dt, G) {
@@ -50,12 +48,32 @@
           return;
         case "wake":
           this.appear = Math.min(1, this.stateT / 1.6);
-          if (this.stateT > 2) this.setState("idle");
+          if (this.stateT > 2.9) this.setState("idle");
+          return;
+        case "erase":
+          // the erasure spreads: it stands flickering, untouchable, then comes back faster
+          this.vx = U.approach(this.vx, 0, 1200 * dt);
+          if (Math.random() < 0.5) P.add({ kind: "scrap", x: this.x + U.rand(0, this.w), y: this.y + U.rand(0, this.h), vx: U.rand(-60, 60), vy: -U.rand(20, 90), g: -20, color: "#ece4d2", size: 4, life: 1 });
+          if (this.stateT > 1.3) this.setState("idle");
+          return;
+        case "sprayWind":
+          this.facing = Math.sign(dx) || this.facing;
+          this.vx = U.approach(this.vx, 0, 1200 * dt);
+          if (this.stateT > D.bosses.hart.spray.wind * this.tempo()) {
+            const S2 = D.bosses.hart.spray;
+            for (let i = 0; i < S2.drops; i++) {
+              const vx = this.facing * U.lerp(170, 560, i / (S2.drops - 1)) + U.rand(-30, 30), vy = -U.rand(380, 560);
+              W.projectiles.push(new LD.Projectile(this.cx() + this.facing * 60, this.y + 10, vx, vy, { dmg: S2.dmg, g: 1100, kind: "ink", r: 9, cause: "hart · ink spray" }));
+            }
+            LD.Audio.sfx.splash(); LD.Audio.sfx.hart();
+            this.setState("land");
+          }
           return;
         case "idle": {
           this.facing = Math.sign(dx) || this.facing;
           this.vx = U.approach(this.vx, 0, 900 * dt);
           if (this.stateT < 0.45 * this.tempo()) return;
+          if (this.phase2() && Math.random() < D.bosses.hart.spray.chance && dist > 120) { this.setState("sprayWind"); LD.Audio.sfx.stomp(); return; }
           const r = Math.random();
           if (dist > 280) this.setState(r < 0.6 ? "chargeWind" : "leapWind");
           else if (dist < 200) this.setState(r < 0.6 ? "sweepWind" : r < 0.8 ? "leapWind" : "chargeWind");
@@ -66,7 +84,14 @@
         }
         case "chargeWind":
           this.facing = Math.sign(dx) || this.facing;
-          if (this.stateT > 0.8 * this.tempo()) { this.setState("charge"); LD.Audio.sfx.hart(); }
+          if (this.stateT > 0.8 * this.tempo()) {
+            this.setState("charge"); LD.Audio.sfx.hart();
+            // erased echoes follow the same line a beat later
+            if (this.phase2()) {
+              const E = D.bosses.hart.echo, n = this.hp < this.maxHp * E.second ? 2 : 1;
+              for (let i = 1; i <= n; i++) W.projectiles.push(new EchoHart(this, this.x, this.facing, E.delay * i));
+            }
+          }
           if (Math.random() < 0.3) P.add({ kind: "dust", x: this.cx() - this.facing * 40, y: this.y + this.h, vx: -this.facing * 100, vy: -40, g: 100, color: "rgba(160,170,180,0.6)", size: 4, life: 0.5 });
           return;
         case "charge":
@@ -110,7 +135,7 @@
           if (this.onGround && this.stateT > 0.15) {
             this.vx = 0; this.setState("land");
             LD.Camera.shake(0.55); LD.Audio.sfx.stomp();
-            for (const s of [-1, 1]) W.projectiles.push(new Shockwave(this.cx() + s * 50, this.y + this.h, s * 430, D.bosses.hart.dmg));
+            for (const s of [-1, 1]) W.projectiles.push(new Shockwave(this.cx() + s * 50, this.y + this.h, s * D.bosses.hart.waveSpeed, D.bosses.hart.dmg));
             P.burst(this.cx(), this.y + this.h, 16, "dust", { angle: -Math.PI / 2, spread: 1.4, min: 80, max: 260, p: { color: "rgba(150,160,170,0.6)", size: 5, g: 300 } });
           }
           return;
@@ -124,11 +149,16 @@
       W.moveBody(this, dt);
     }
     takeHit(G, h) {
-      if (this.state === "dormant" || this.state === "wake") return "blocked";
+      if (this.state === "dormant" || this.state === "wake" || this.state === "erase") return "blocked";
       const wasP2 = this.phase2();
       const r = super.takeHit(G, h);
       this.vx = 0;
-      if (!wasP2 && this.phase2() && !this.dead) { LD.Audio.sfx.hart(); LD.HUD.thought("Its outline flickers — more of it is being erased."); }
+      if (!wasP2 && this.phase2() && !this.dead) {
+        this.setState("erase"); this.poise = this.data.poise;
+        LD.Audio.sfx.hart(); LD.Audio.sfx.tear();
+        G.bossPhaseBeat(this, "236,225,201");
+        LD.HUD.bark("", "Its outline tears — erased echoes spill from it.");
+      }
       return r;
     }
     die(G) {
@@ -145,6 +175,18 @@
       return super.update(dt, G);
     }
     draw(ctx, G) {
+      // where the leap will come down: an ink shadow that darkens as it falls
+      if ((this.state === "leapWind" || this.state === "leap") && !this.dead && this.targetX != null) {
+        const k = this.state === "leapWind" ? 0.3 : 0.4 + 0.6 * U.clamp(this.stateT / 0.8, 0, 1);
+        const gy = this.state === "leap" ? this.groundY || (this.y + this.h) : this.y + this.h;
+        if (this.state === "leapWind") this.groundY = this.y + this.h;
+        ctx.save();
+        ctx.fillStyle = "rgba(21,16,13," + 0.35 * k + ")";
+        Art.blobPath(ctx, this.targetX, gy - 2, 70 * (1.2 - k * 0.4), 9, 7, 16, 0.2); ctx.fill();
+        ctx.strokeStyle = "rgba(156,42,34," + 0.7 * k + ")"; ctx.lineWidth = 2; ctx.setLineDash([6, 5]);
+        ctx.beginPath(); ctx.ellipse(this.targetX, gy - 2, 120, 12, 0, 0, 7); ctx.stroke();
+        ctx.restore();
+      }
       if (this.state === "dormant" || this.state === "wake" || !this.dead) {
         if (!this.dead && this.state !== "dormant") drawSeal(ctx, this.sealTiles, G.time);
       }
@@ -168,6 +210,8 @@
         case "chargeWind": return { name: "charge_wind", p: t / (0.8 * k) };
         case "charge": return { name: "charge", t };
         case "stun": return { name: "stun", t };
+        case "erase": return { name: "stun", t };
+        case "sprayWind": return { name: "sweep", p: 0.3 * t / (0.6 * k) };
         case "sweepWind": return { name: "sweep", p: 0.45 * t / (0.55 * k) };
         case "sweep": return { name: "sweep", p: 0.45 + 0.55 * t / 0.85 };
         case "leapWind": return { name: "leap", p: 0.3 * t / (0.55 * k) };
@@ -249,13 +293,46 @@
     }
   }
 
+  // A half-erased afterimage that re-runs the Hart's charge line. It can be struck away.
+  class EchoHart {
+    constructor(hart, x, dir, delay) {
+      this.hart = hart; this.x = x; this.y = hart.y; this.w = hart.w; this.h = hart.h; this.dir = dir; this.delay = delay;
+      this.t = 0; this.dead = false; this.hostile = true; this.cause = "hart · echo";
+    }
+    box() { return this.t < this.delay ? { x: -9999, y: -9999, w: 0, h: 0 } : { x: this.x + 14, y: this.y + 24, w: this.w - 28, h: this.h - 24 }; }
+    update(dt, G) {
+      this.t += dt;
+      if (this.t < this.delay) return !this.dead;
+      if (!this.launched) { this.launched = true; LD.Audio.sfx.tele(); }
+      this.x += this.dir * D.bosses.hart.echo.speed * dt;
+      const front = this.dir > 0 ? this.x + this.w + 4 : this.x - 4;
+      if (W.pointSolid(front, this.y + this.h - 20) || this.t > this.delay + 3) { this.dead = true; P.burst(this.x + this.w / 2, this.y + this.h / 2, 14, "scrap", { min: 60, max: 220, p: { color: "#dfe8f2", g: 300, size: 5 } }); }
+      if (!this.dead && LD.Combat.enemyStrike(G, this.box(), D.bosses.hart.echo.dmg, this.x + this.w / 2 - this.dir * 40, { cause: this.cause })) this.dead = true;
+      if (Math.random() < 0.6) P.add({ kind: "scrap", x: this.x + U.rand(0, this.w), y: this.y + U.rand(10, this.h), vx: -this.dir * 60, vy: -20, g: 0, color: "rgba(210,225,240,0.7)", size: 3, life: 0.5 });
+      return !this.dead;
+    }
+    draw(ctx, G) {
+      const h = this.hart, launched = this.t >= this.delay;
+      // a pale outline appears where it will run from, then it gallops as a ghost
+      const a = launched ? 0.42 : 0.12 + 0.25 * (this.t / this.delay);
+      const sv = { x: h.x, facing: h.facing, state: h.state, stateT: h.stateT };
+      h.x = this.x; h.facing = this.dir; h.state = launched ? "charge" : "chargeWind"; h.stateT = launched ? this.t - this.delay : this.t;
+      ctx.save(); ctx.globalAlpha = a;
+      if (LD.Sprites.enabled("hart")) LD.Sprites.draw(ctx, "hart", "charge", { name: "charge", t: this.t }, h.cx(), h.y + h.h, this.dir, { alpha: a });
+      else h.drawBody(ctx, G);
+      ctx.restore();
+      Object.assign(h, sv);
+      if (!launched) Art.telegraph(ctx, this.x + this.w / 2, this.y - 14, this.t);
+    }
+  }
+
   class Shockwave {
     constructor(x, y, vx, dmg) { this.x = x; this.y = y; this.vx = vx; this.dmg = dmg; this.t = 0; this.dead = false; this.hostile = true; this.h = 34; }
     box() { return { x: this.x - 16, y: this.y - this.h, w: 32, h: this.h }; }
     update(dt, G) {
       this.t += dt; this.x += this.vx * dt;
       if (W.pointSolid(this.x + Math.sign(this.vx) * 16, this.y - 10) || this.t > 3) this.dead = true;
-      if (!this.dead && LD.Combat.enemyStrike(G, this.box(), this.dmg, this.x - this.vx)) this.dead = true;
+      if (!this.dead && LD.Combat.enemyStrike(G, this.box(), this.dmg, this.x - this.vx, { cause: this.cause || "hart · shockwave" })) this.dead = true;
       if (Math.random() < 0.6) P.add({ kind: this.fire ? "ember" : "dust", x: this.x, y: this.y - 6, vx: -this.vx * 0.1, vy: -U.rand(40, 120), g: 200, color: "rgba(80,70,60,0.6)", size: 3, life: 0.5 });
       return !this.dead;
     }
@@ -280,6 +357,8 @@
     floor: { wind: 0.55, act: 0.1, rec: 0.8, range: [0, 2000], phase: 2, w: 2 },
     wave: { wind: 0.72, act: 0.15, rec: 0.75, range: [120, 2000], phase: 2, w: 2 },
     collapse: { wind: 0.7, act: 0.1, rec: 0.6, range: [0, 2000], phase: 3, w: 2 },
+    // feeds the fire: a long, readable channel that can be interrupted (doused)
+    stoke: { wind: 1.9, act: 0.3, rec: 0.9, range: [0, 2000], phase: 2, w: 2 },
   };
 
   class Marshal extends LD.Enemy {
@@ -318,6 +397,7 @@
         if (dist < a.range[0] || dist > a.range[1]) continue;
         if (name === this.lastAtk && Math.random() < 0.7) continue;
         if (name === "collapse" && this.collapses.length) continue;
+        if (name === "stoke" && (this.stokeCD || 0) > 0) continue;
         let w = a.w;
         if (this.phase >= 2 && (name === "cleave" || name === "sweep")) w -= 1;
         for (let i = 0; i < w; i++) opts.push(name);
@@ -331,6 +411,12 @@
       this.atk = { name, def: a, phase: "wind", t: 0, hit: false, wind: a.wind * this.tempo(), act: a.act, rec: a.rec * (0.6 + 0.4 * this.tempo()) };
       this.lastAtk = name;
       this.setState("atk");
+      if (name === "stoke") {
+        this.stokeCD = D.bosses.marshal.stoke.cooldown; this.atk.pressure = 0;
+        LD.Audio.sfx.fireBurst(); LD.Audio.sfx.creak();
+        LD.HUD.bark(this.name, this.lastStand ? "If I burn, the Archive burns with me!" : U.pick(["Feed the fire.", "Burn brighter.", "Every page, kindling."]));
+        if (!G.S.flags.hintStoke) { G.S.flags.hintStoke = true; setTimeout(() => LD.HUD.thought("He's stoking the flames — douse him with water or strike hard before it erupts, or get clear!"), 300); }
+      }
       this.facing = Math.sign(G.player.cx() - this.cx()) || this.facing;
       if (name === "cleave" || name === "wave") LD.Audio.sfx.creak();
       if (name === "lob" || name === "floor") LD.Audio.sfx.crackle();
@@ -354,6 +440,9 @@
         }
       }
       this.updateCollapses(dt, G);
+      this.stokeCD = Math.max(0, (this.stokeCD || 0) - dt);
+      // last stand: near death he always stokes one final time
+      if (this.lastStand === 1 && this.state === "idle") { this.lastStand = 2; this.stokeCD = 0; this.startAtk("stoke", G); return; }
 
       switch (this.state) {
         case "dormant":
@@ -395,6 +484,12 @@
       const front = (w, h, y0 = 0) => ({ x: this.facing > 0 ? this.cx() - 10 : this.cx() - w + 10, y: this.y + this.h - h - y0, w, h });
       if (a.phase === "wind") {
         if (a.name === "lunge") this.vx = -this.facing * 40;
+        if (a.name === "stoke") {
+          // embers are drawn in towards him as the fire builds
+          const k = a.t / a.wind, r = D.bosses.marshal.stoke.radius * (1 - k * 0.6);
+          for (let i = 0; i < 2; i++) { const ang = Math.random() * Math.PI * 2; P.add({ kind: "ember", x: this.cx() + Math.cos(ang) * r, y: this.cy() + Math.sin(ang) * r * 0.5, vx: -Math.cos(ang) * r * 1.2, vy: -Math.sin(ang) * r * 0.6, g: 0, size: 3, life: 0.7 }); }
+          if (Math.random() < dt * 3) LD.Audio.sfx.crackle();
+        }
         if (a.t >= a.wind) {
           a.phase = "act"; a.t = 0;
           switch (a.name) {
@@ -407,8 +502,8 @@
                 const tx = p.cx() + i * 110, tAir = 0.9;
                 const vx = (tx - this.cx()) / tAir, vy = -(2 * 900 * tAir) / 2 * 0.95;
                 W.projectiles.push(new LD.Projectile(this.cx() + this.facing * 20, this.y + 30, vx, vy, {
-                  dmg: d.dmg, g: 900, kind: "ember", r: 9,
-                  onLand: (GG, pr) => { W.effects.push(new LD.FirePatch(pr.x, 15 * T, 60, 1.3, 0.05)); LD.Audio.sfx.fireBurst(); },
+                  dmg: d.dmg, g: 900, kind: "ember", r: 9, cause: "marshal · ember lob",
+                  onLand: (GG, pr) => { W.effects.push(new LD.FirePatch(pr.x, 15 * T, 60, 1.3, 0.3, { cause: "marshal · ember patch" })); LD.Audio.sfx.fireBurst(); },
                 }));
               }
               LD.Audio.sfx.fireBurst();
@@ -416,13 +511,27 @@
             case "lunge": this.vx = this.facing * 760; LD.Audio.sfx.swing(true); break;
             case "floor": {
               LD.Audio.sfx.stomp(); LD.Camera.shake(0.3);
-              const xs = [p.cx(), p.cx() + U.pick([-1, 1]) * U.rand(220, 300), this.cx() + this.facing * 140];
-              for (const x of xs) W.effects.push(new LD.FirePatch(U.clamp(x, 3 * T, 38 * T), 15 * T, 120, 2.3 + this.phase * 0.2, 1.05 * this.tempo() + 0.2, { dmg: d.dmg, h: 70 }));
+              // one patch under you, one to a side, one behind him — the space in front of the
+              // Marshal stays fightable, so melee isn't locked out for the whole burn
+              const xs = [p.cx(), p.cx() + U.pick([-1, 1]) * U.rand(220, 300), this.cx() - this.facing * 160];
+              for (const x of xs) W.effects.push(new LD.FirePatch(U.clamp(x, 3 * T, 38 * T), 15 * T, 120, D.bosses.marshal.floorBurn + this.phase * 0.2, 1.15 * this.tempo() + 0.25, { dmg: d.dmg, h: 70, cause: "marshal · floor fire" }));
               break;
             }
             case "wave": {
               LD.Audio.sfx.stomp(); LD.Camera.shake(0.45); LD.Audio.sfx.fireBurst();
-              for (const s of [-1, 1]) { const w = new Shockwave(this.cx() + s * 70, this.y + this.h, s * 460, d.dmg); w.fire = true; W.projectiles.push(w); }
+              for (const s of [-1, 1]) { const w = new Shockwave(this.cx() + s * 70, this.y + this.h, s * 460, d.dmg); w.fire = true; w.cause = "marshal · fire wave"; W.projectiles.push(w); }
+              break;
+            }
+            case "stoke": {
+              // the Inferno: a burst around him, fire waves along the floor, the ground left burning
+              const St = D.bosses.marshal.stoke, cx = this.cx(), fy = this.y + this.h;
+              LD.Combat.enemyStrike(G, { x: cx - St.radius, y: fy - 170, w: St.radius * 2, h: 170 }, St.dmg, cx, { cause: "marshal · inferno" });
+              for (const s of [-1, 1]) { const w = new Shockwave(cx + s * St.radius * 0.6, fy, s * 520, d.dmg); w.fire = true; w.cause = "marshal · inferno wave"; W.projectiles.push(w); }
+              for (const s of [-1, 1]) W.effects.push(new LD.FirePatch(U.clamp(cx + s * U.rand(120, 240), 3 * T, 38 * T), 15 * T, 110, 1.6, 0.35, { dmg: d.dmg, h: 60, cause: "marshal · inferno embers" }));
+              LD.Audio.sfx.fireBurst(); LD.Audio.sfx.roar();
+              LD.Camera.shake(0.8);
+              if (LD.Cinema) { LD.Cinema.flash("255,150,60", 0.7, 2); LD.Cinema.ring(cx, fy - 40, "255,120,40", 1.6); LD.Cinema.punch(0.1); }
+              P.burst(cx, fy - 60, 60, "ember", { min: 150, max: 600, p: { g: 100, size: 4, life: 1.3 } });
               break;
             }
             case "collapse": {
@@ -452,7 +561,7 @@
           if (a.name === "cleave") {
             LD.Camera.shake(0.4); LD.Audio.sfx.stomp();
             P.burst(this.cx() + this.facing * 120, 15 * T, 14, "ember", { angle: -Math.PI / 2, spread: 1.2, min: 80, max: 300, p: { g: 300, size: 3 } });
-            if (this.phase >= 2) W.effects.push(new LD.FirePatch(this.cx() + this.facing * 120, 15 * T, 80, 1.2, 0.05));
+            if (this.phase >= 2) W.effects.push(new LD.FirePatch(this.cx() + this.facing * 120, 15 * T, 80, 1.2, 0.45, { cause: "marshal · cleave afterburn" }));
           }
           if (a.name === "lunge" && this.phase >= 3) { this.startAtk("cleave", G); this.atk.wind *= 0.6; return; }
         }
@@ -488,6 +597,16 @@
       if (this.state === "dormant" || this.state === "intro" || this.state === "roar") return "blocked";
       const armor = this.state === "atk" && this.atk && this.atk.phase !== "wind";
       const kneel = this.state === "stagger";
+      // a blow while he stokes: water, or enough force, drowns the fire and drops him to a knee
+      if (this.state === "atk" && this.atk && this.atk.name === "stoke" && this.atk.phase === "wind") {
+        this.atk.pressure += h.stagger + (h.rel === "strong" ? 25 : 0);   // water counts double-ish
+        if (this.atk.pressure >= D.bosses.marshal.stoke.douse) {
+          this.hp -= h.dmg; this.hurtT = 0.16;
+          this.douse(G);
+          if (this.hp <= 0) { this.hp = 0; this.die(G); }
+          return "hit";
+        }
+      }
       this.hp -= h.dmg * (kneel ? 1.25 : 1);
       this.hurtT = 0.16;
       if (!armor) this.poise -= h.stagger;
@@ -495,6 +614,7 @@
       LD.Audio.sfx.enemyHurt();
       if (this.hp <= 0) { this.hp = 0; this.die(G); return "hit"; }
       const frac = this.hp / this.maxHp;
+      if (this.phase >= 3 && !this.lastStand && frac <= D.bosses.marshal.stoke.lastStand) this.lastStand = 1;
       const want = frac <= D.bosses.marshal.phases[2] ? 3 : frac <= D.bosses.marshal.phases[1] ? 2 : 1;
       if (want > this.phase) { this.phase = want; this.enterPhase(G); return "hit"; }
       if (this.poise <= 0 && !kneel) {
@@ -504,6 +624,20 @@
         LD.HUD.thought("The Marshal kneels — strike now!");
       }
       return "hit";
+    }
+
+    // doused mid-stoke: steam, a long kneel, and every hit on him is critical
+    douse(G) {
+      this.atk = null; this.poise = this.data.poise;
+      this.setState("stagger"); this.stateT = -0.9;   // a longer kneel than a normal stagger
+      LD.Audio.sfx.splash(); LD.Audio.sfx.guardBreak();
+      P.burst(this.cx(), this.y + 40, 40, "mote", { angle: -Math.PI / 2, spread: 1.4, min: 60, max: 260, p: { color: "rgba(235,240,245,0.85)", g: -80, size: 6, life: 1.4 } });
+      P.add({ kind: "text", x: this.cx(), y: this.y - 20, vy: -50, g: 0, text: "✶ doused!", size: 30, life: 1.2, color: "#1c3f73", front: true });
+      LD.HUD.bark(this.name, "The damp… no—!");
+      G.hitstop = Math.max(G.hitstop, 0.14);
+      if (LD.Cinema) { LD.Cinema.flash("200,225,245", 0.5, 2.5); LD.Cinema.ring(this.cx(), this.cy(), "63,127,192", 1.2); LD.Cinema.punch(0.06); }
+      LD.Input.rumble(0.6, 200);
+      if (LD.Telemetry) LD.Telemetry.count("douse");
     }
 
     enterPhase(G) {
@@ -519,6 +653,7 @@
       LD.HUD.bark(line.who, line.text);
       G.arenaBurn = this.phase - 1;
       P.burst(this.cx(), this.cy(), 40, "ember", { min: 100, max: 500, p: { g: 100, size: 3, life: 1.4 } });
+      G.bossPhaseBeat(this);
     }
 
     die(G) {
@@ -576,7 +711,27 @@
       if (!this.dead && this.state !== "dormant") drawSeal(ctx, this.sealTiles, G.time);
       this.drawArena(ctx, G);
       if (this.gone) return;
+      const a = this.atk, stoking = !this.dead && this.state === "atk" && a && a.name === "stoke" && a.phase === "wind";
+      if (stoking) {
+        // the Inferno's reach: a flame ring on the floor that fills as the fire builds
+        const St = D.bosses.marshal.stoke, k = U.clamp(a.t / a.wind, 0, 1), cx = this.cx(), fy = this.y + this.h;
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        Art.glow(ctx, cx, fy - 90, 140 + k * 160, "rgba(255,110,40,0.55)", 0.4 + k * 0.6);
+        ctx.globalCompositeOperation = "source-over";
+        ctx.fillStyle = "rgba(255,90,30," + (0.08 + k * 0.22) + ")";
+        ctx.beginPath(); ctx.ellipse(cx, fy - 2, St.radius * k, 16 * k + 2, 0, 0, 7); ctx.fill();
+        ctx.strokeStyle = "rgba(255,150,70," + (0.5 + k * 0.5) + ")"; ctx.lineWidth = 3; ctx.setLineDash([10, 7]); ctx.lineDashOffset = -G.time * 60;
+        ctx.beginPath(); ctx.ellipse(cx, fy - 2, St.radius, 18, 0, 0, 7); ctx.stroke();
+        ctx.restore();
+      }
       super.draw(ctx, G);
+      if (stoking && Math.floor(G.time * 4) % 2 === 0) {
+        // shape cue: a water drop over his head means "douse me"
+        ctx.save(); ctx.fillStyle = "rgba(236,225,201,0.9)"; ctx.beginPath(); ctx.arc(this.cx(), this.y - 36, 15, 0, 7); ctx.fill();
+        ctx.strokeStyle = Art.INK; ctx.lineWidth = 2; ctx.stroke(); ctx.restore();
+        Art.elementGlyph(ctx, "water", this.cx(), this.y - 35, 9, "#2f6aa8");
+      }
     }
 
     spriteAlpha() { return this.dead && this.dissolving ? Math.max(0, 1 - (this.dissolveT || 0) / 2.2) : 1; }
@@ -590,7 +745,7 @@
       if (st === "atk" && a) {
         const tot = a.wind + a.act + a.rec;
         const done = a.phase === "wind" ? a.t : a.phase === "act" ? a.wind + a.t : a.wind + a.act + a.t;
-        const name = { floor: "stomp", wave: "stomp", collapse: "stomp" }[a.name] || a.name;
+        const name = { floor: "stomp", wave: "stomp", collapse: "stomp", stoke: "stomp" }[a.name] || a.name;
         return { name, p: done / tot };
       }
       return { name: Math.abs(this.vx) > 10 ? "walk" : "idle", t: this.t };
@@ -614,8 +769,8 @@
         const k = a.phase === "wind" ? U.easeOut(a.t / a.wind) : a.phase === "act" ? U.easeOut(a.t / Math.max(0.01, a.act)) : 1;
         const K = {
           cleave: [-1.3, -2.5, 0.9], sweep: [-1.3, 2.7, 0.25], lob: [-1.3, -1.0, -1.1], lunge: [-1.3, -0.1, 0.0],
-          floor: [-1.3, -1.6, 1.4], wave: [-1.3, -2.6, 1.2], collapse: [-1.3, -1.5, 1.5],
-        }[a.name];
+          floor: [-1.3, -1.6, 1.4], wave: [-1.3, -2.6, 1.2], collapse: [-1.3, -1.5, 1.5], stoke: [-1.3, 1.25, 1.35],
+        }[a.name] || [-1.3, -1.3, -1.3];
         if (a.phase === "wind") { ha = U.lerp(K[0], K[1], k); lean = a.name === "cleave" || a.name === "wave" ? -0.15 * k : 0.1 * k; }
         else if (a.phase === "act") { ha = U.lerp(K[1], K[2], k); lean = 0.25; ext = a.name === "lunge" ? 20 : 0; }
         else { ha = K[2]; lean = 0.15 * (1 - a.t / a.rec); }
@@ -713,7 +868,7 @@
       this.t += dt;
       if (this.t > this.warn) {
         this.vy += 1600 * dt; this.y += this.vy * dt; this.rot += dt * 6;
-        if (LD.Combat.enemyStrike(G, this.box(), 20, this.x)) this.dead = true;
+        if (LD.Combat.enemyStrike(G, this.box(), 20, this.x, { cause: "marshal · falling page" })) this.dead = true;
         if (this.y > this.floorY - 10) {
           this.dead = true;
           W.effects.push(new LD.FirePatch(this.x, this.floorY, 50, 0.9, 0.02));
